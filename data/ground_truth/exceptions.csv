@@ -1,0 +1,6 @@
+exception_id,issue_type,affected_record_ids,expected_outcome,injected_at
+EXC-000001,opted_out_lead_contacted,"LEAD-2026-000001,TASK-LEAD-2026-000001-999,CSN-ANOM-000001",Task creation must be rejected or cancelled due to lack of valid consent at outreach timestamp,2026-03-11T10:00:00Z
+EXC-000002,score_influenced_post_conversion,"LEAD-2026-000002,ACT-LEAD-2026-000002-999",Lead score must freeze upon conversion; activities after converted_at must not influence score,2026-06-01T12:00:00Z
+EXC-000003,lead_assigned_outside_territory,"LEAD-2026-000001,REP-000001",Lead must be flagged for territory mismatch and re-routed to a compatible sales representative,2026-01-29T00:00:00Z
+EXC-000004,duplicate_opportunity,"LEAD-2026-999901,OPP-2026-999901,OPP-2026-000001",Duplicate leads must not generate duplicate opportunities; opportunity should be flagged or merged,2026-01-12T00:00:00Z
+EXC-000005,stage_history_gap,"LEAD-2026-000011,SH-000018",Stage transition sequence gap detected; lifecycle audit requires continuous stage history records,2026-12-07T00:00:00Z

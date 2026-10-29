@@ -1,0 +1,37 @@
+[
+  {
+    "exception_id": "EXC-000001",
+    "issue_type": "opted_out_lead_contacted",
+    "affected_record_ids": "LEAD-2026-000001,TASK-LEAD-2026-000001-999,CSN-ANOM-000001",
+    "expected_outcome": "Task creation must be rejected or cancelled due to lack of valid consent at outreach timestamp",
+    "injected_at": "2026-03-11T10:00:00Z"
+  },
+  {
+    "exception_id": "EXC-000002",
+    "issue_type": "score_influenced_post_conversion",
+    "affected_record_ids": "LEAD-2026-000002,ACT-LEAD-2026-000002-999",
+    "expected_outcome": "Lead score must freeze upon conversion; activities after converted_at must not influence score",
+    "injected_at": "2026-06-01T12:00:00Z"
+  },
+  {
+    "exception_id": "EXC-000003",
+    "issue_type": "lead_assigned_outside_territory",
+    "affected_record_ids": "LEAD-2026-000001,REP-000001",
+    "expected_outcome": "Lead must be flagged for territory mismatch and re-routed to a compatible sales representative",
+    "injected_at": "2026-01-29T00:00:00Z"
+  },
+  {
+    "exception_id": "EXC-000004",
+    "issue_type": "duplicate_opportunity",
+    "affected_record_ids": "LEAD-2026-999901,OPP-2026-999901,OPP-2026-000001",
+    "expected_outcome": "Duplicate leads must not generate duplicate opportunities; opportunity should be flagged or merged",
+    "injected_at": "2026-01-12T00:00:00Z"
+  },
+  {
+    "exception_id": "EXC-000005",
+    "issue_type": "stage_history_gap",
+    "affected_record_ids": "LEAD-2026-000011,SH-000018",
+    "expected_outcome": "Stage transition sequence gap detected; lifecycle audit requires continuous stage history records",
+    "injected_at": "2026-12-07T00:00:00Z"
+  }
+]

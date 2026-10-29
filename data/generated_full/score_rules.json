@@ -1,0 +1,47 @@
+[
+  {
+    "score_rule_id": "SCR-000001",
+    "name": "Fit Scoring Rule v1",
+    "component": "fit",
+    "weight": 0.5,
+    "version": 1,
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_to": null,
+    "min_score": 0,
+    "max_score": 100,
+    "description": "fit component scoring rule",
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "score_rule_id": "SCR-000002",
+    "name": "Intent Scoring Rule v1",
+    "component": "intent",
+    "weight": 0.3,
+    "version": 1,
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_to": null,
+    "min_score": 0,
+    "max_score": 100,
+    "description": "intent component scoring rule",
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  },
+  {
+    "score_rule_id": "SCR-000003",
+    "name": "Engagement Scoring Rule v1",
+    "component": "engagement",
+    "weight": 0.2,
+    "version": 1,
+    "effective_from": "2026-01-01T00:00:00Z",
+    "effective_to": null,
+    "min_score": 0,
+    "max_score": 100,
+    "description": "engagement component scoring rule",
+    "is_active": true,
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-01T00:00:00Z"
+  }
+]
