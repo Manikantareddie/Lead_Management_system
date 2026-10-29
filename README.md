@@ -37,6 +37,16 @@ npm.cmd --prefix frontend run dev -- --host 127.0.0.1 --port 5173
 
 Open the **Local** URL printed by Vite (normally `http://127.0.0.1:5173/`). If that port is already in use, Vite automatically selects another port and prints its URL. Stop either server with `Ctrl+C` in its terminal.
 
+### Deploy the backend to Render
+The included `render.yaml` configures the FastAPI backend as a Render web service. In Render, create a new Blueprint and select this GitHub repository; Render will build and deploy the API using this configuration. After deployment, verify the service's `/health` endpoint.
+
+The configuration uses Render's free plan. The full dataset uses about 405 MB of memory in the local backend, so this plan may exceed its memory limit and restart. If that happens, use a Render plan with more memory.
+
+### Deploy the frontend to Netlify
+The frontend is a static Vite application and can be deployed from this repository using the included `netlify.toml` configuration. In Netlify, create a site by importing the GitHub repository; Netlify will use the configured build command and publish directory.
+
+After the backend is deployed, set the `VITE_API_BASE_URL` environment variable in the Netlify site's build settings to the public HTTPS base URL of the Render service (for example, `https://yottaflex-api.onrender.com`, with no trailing slash), then trigger a new deploy. Without this variable, the frontend uses `http://127.0.0.1:8000`, which is only suitable for local development.
+
 ---
 
 ## 2. System Architecture
