@@ -61,7 +61,7 @@ class SupabaseDataStore:
                 conn_info,
                 min_size=1,
                 max_size=6,
-                timeout=15,
+                timeout=3,
                 max_idle=300,
             )
         return self._pool
@@ -73,7 +73,7 @@ class SupabaseDataStore:
             logger.warning("Connection pool acquisition failed, falling back to direct connect: %s", e)
             import psycopg
             if DATABASE_URL:
-                return psycopg.connect(DATABASE_URL, autocommit=True)
+                return psycopg.connect(DATABASE_URL, connect_timeout=3, autocommit=True)
             return psycopg.connect(
                 host=SUPABASE_HOST,
                 port=SUPABASE_PORT,
@@ -81,12 +81,25 @@ class SupabaseDataStore:
                 user=SUPABASE_USER,
                 password=SUPABASE_PASSWORD,
                 sslmode="require",
-                connect_timeout=10,
+                connect_timeout=3,
                 autocommit=True,
             )
 
     def test_connection(self) -> bool:
         try:
+            import socket
+            target_host = SUPABASE_HOST
+            target_port = SUPABASE_PORT
+            if DATABASE_URL:
+                from urllib.parse import urlparse
+                parsed = urlparse(DATABASE_URL)
+                target_host = parsed.hostname or SUPABASE_HOST
+                target_port = parsed.port or 5432
+            if not target_host:
+                return False
+            # Fast socket probe: aborts in <1s if network is unreachable (e.g. IPv6 on Render) or host down
+            with socket.create_connection((target_host, target_port), timeout=1.5):
+                pass
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1;")
