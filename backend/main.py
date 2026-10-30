@@ -71,7 +71,10 @@ class StageTransitionRequest(BaseModel):
     reason: Optional[str] = None
 
 
+@app.get("/")
+@app.head("/")
 @app.get("/health")
+@app.head("/health")
 @app.get("/api/health")
 def health_check():
     """Health check endpoint providing engine status, active datastore mode, and system time."""
