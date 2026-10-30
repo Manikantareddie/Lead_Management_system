@@ -1,6 +1,20 @@
-# YottaFlex Lead Intelligence & Operations Console
+# LMS – Lead Management System
+### Lead Intelligence & Operations Console
 
-Enterprise lead scoring, routing governance, consent compliance, and sales operations console built to generate, validate, audit, and operate synthetic CRM datasets at enterprise scale (206,609 records across 13 relational tables), backed by Supabase PostgreSQL and an indexed local fallback engine.
+> **Enterprise Lead Scoring, Routing Governance, Consent Compliance, and Pipeline Analytics**  
+> Built to generate, validate, audit, and operate CRM datasets at enterprise scale (**206,609 records across 13 relational tables**), backed by live **Supabase PostgreSQL** and an indexed fallback engine.
+
+---
+
+## 🌐 Live Production Deployments
+
+| Resource | URL | Status |
+| :--- | :--- | :--- |
+| **Live Web Application** | **[https://smartleadhub.netlify.app](https://smartleadhub.netlify.app)** | ![Netlify Status](https://img.shields.io/badge/Netlify-Live%20Production-success?style=flat&logo=netlify) |
+| **Backend API (Render)** | **[https://lead-management-system-qdmd.onrender.com](https://lead-management-system-qdmd.onrender.com)** | ![Render Status](https://img.shields.io/badge/Render-Active-success?style=flat&logo=render) |
+| **Interactive API Docs (Swagger)** | **[https://lead-management-system-qdmd.onrender.com/docs](https://lead-management-system-qdmd.onrender.com/docs)** | ![Swagger](https://img.shields.io/badge/Swagger-OpenAPI%203.0-blue?style=flat&logo=swagger) |
+| **API Health Check** | **[https://lead-management-system-qdmd.onrender.com/health](https://lead-management-system-qdmd.onrender.com/health)** | ![Health](https://img.shields.io/badge/Health-200%20OK-brightgreen?style=flat) |
+| **GitHub Repository** | **[https://github.com/Manikantareddie/Lead_Management_system](https://github.com/Manikantareddie/Lead_Management_system)** | ![GitHub](https://img.shields.io/badge/GitHub-Repository-181717?style=flat&logo=github) |
 
 ---
 
