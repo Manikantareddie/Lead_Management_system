@@ -603,7 +603,8 @@ class SupabaseDataStore:
 
                 from_stage = lead.get("status")
                 if not is_valid_stage_transition(from_stage, to_stage):
-                    allowed = sorted(list(VALID_TRANSITIONS.get(from_stage, set())))
+                    from_stage_key = str(from_stage or "")
+                    allowed = sorted(list(VALID_TRANSITIONS.get(from_stage_key, set())))
                     raise ValueError(
                         f"Invalid stage transition from '{from_stage}' to '{to_stage}'. Allowed transitions: {allowed}"
                     )
@@ -1378,7 +1379,8 @@ class LocalDataStore:
 
         from_stage = lead.get("status")
         if not is_valid_stage_transition(from_stage, to_stage):
-            allowed = sorted(list(VALID_TRANSITIONS.get(from_stage, set())))
+            from_stage_key = str(from_stage or "")
+            allowed = sorted(list(VALID_TRANSITIONS.get(from_stage_key, set())))
             raise ValueError(
                 f"Invalid stage transition from '{from_stage}' to '{to_stage}'. Allowed transitions: {allowed}"
             )
