@@ -64,6 +64,7 @@ def export_sql(dataset: dict[str, list[dict]], sql_file_path: Path | str) -> Non
         "consents",
         "activities",
         "tasks",
+        "task_decisions",
         "opportunities",
         "stage_histories",
     ]

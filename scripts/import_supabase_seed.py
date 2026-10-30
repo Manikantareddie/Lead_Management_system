@@ -1,28 +1,41 @@
 """
 YottaFlex Lead Management - Safe Supabase Seed Importer
 Imports the full generated SQL seed (data/generated_full/seed.sql) into Supabase PostgreSQL.
-Preserves the existing BEGIN/COMMIT transaction boundaries without independent commits.
+Preserves SQL transaction boundaries (BEGIN; / COMMIT;) and verifies row counts before committing.
 """
 
 import argparse
 import getpass
 import os
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
+from typing import Any, Optional
 import psycopg
 from psycopg.pq import TransactionStatus
 
-# Connection configuration (mirrors test_supabase.py without hardcoded credentials)
-HOST = os.getenv("SUPABASE_HOST", "")
-PORT = int(os.getenv("SUPABASE_PORT", "5432"))
-DBNAME = os.getenv("SUPABASE_DBNAME", "postgres")
-USER = os.getenv("SUPABASE_USER", "")
-CONNECT_TIMEOUT = 30
-DEFAULT_SEED_PATH = Path("data/generated_full/seed.sql")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+# Auto-load .env
+_env_path = PROJECT_ROOT / ".env"
+if _env_path.exists():
+    try:
+        with open(_env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+    except Exception:
+        pass
+
+DEFAULT_SEED_PATH = PROJECT_ROOT / "data" / "generated_full" / "seed.sql"
 DEFAULT_BATCH_SIZE = 500  # Number of INSERT statements per multi-statement query chunk
 
-# 12 Target Tables in Foreign Key Dependency Order
+# 13 Target Tables in Foreign Key Dependency Order
 TARGET_TABLES = [
     "companies",
     "contacts",
@@ -34,6 +47,7 @@ TARGET_TABLES = [
     "consents",
     "activities",
     "tasks",
+    "task_decisions",
     "opportunities",
     "stage_histories",
 ]
@@ -50,6 +64,7 @@ EXPECTED_COUNTS = {
     "consents": 15000,
     "activities": 35000,
     "tasks": 25000,
+    "task_decisions": 38416,
     "opportunities": 3000,
     "stage_histories": 25000,
 }
@@ -67,63 +82,95 @@ def check_seed_file(seed_path: Path) -> int:
     return size_bytes
 
 
-def check_tables_empty(cur) -> bool:
-    """
-    Check if any of the target tables contain records.
-    Returns True if all tables are empty, False otherwise.
-    """
-    non_empty = {}
+def get_connection(password_override: Optional[str] = None) -> Any:
+    """Establish connection to Supabase PostgreSQL using env or overrides."""
+    host = os.getenv("SUPABASE_HOST", "")
+    port = int(os.getenv("SUPABASE_PORT", "5432"))
+    dbname = os.getenv("SUPABASE_DBNAME", "postgres")
+    user = os.getenv("SUPABASE_USER", "")
+    password = password_override or os.getenv("SUPABASE_PASSWORD", "")
+
+    if host and user and password:
+        return psycopg.connect(
+            host=host,
+            port=port,
+            dbname=dbname,
+            user=user,
+            password=password,
+            sslmode="require",
+            connect_timeout=30,
+            autocommit=True,  # Allows SQL script BEGIN; and COMMIT; to manage transaction boundaries
+        )
+
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        return psycopg.connect(db_url, autocommit=True)
+
+    print("[ERROR] Supabase credentials not found in environment or .env file.")
+    print("Please set SUPABASE_HOST, SUPABASE_USER, and SUPABASE_PASSWORD in .env.")
+    sys.exit(1)
+
+
+def check_table_counts(cur) -> dict:
+    """Query counts for all target tables."""
+    counts = {}
     for table in TARGET_TABLES:
-        cur.execute(f"SELECT COUNT(*) FROM {table};")
-        count = cur.fetchone()[0]
-        if count > 0:
-            non_empty[table] = count
-
-    if non_empty:
-        print("\n[ABORT] Target database is not empty. Found existing records in:")
-        for table, count in non_empty.items():
-            print(f"  - {table}: {count:,} records")
-        print("\n[ABORT] Import aborted to prevent corrupting existing data.")
-        print("[INFO] No records were deleted, truncated, or inserted.")
-        return False
-
-    return True
+        try:
+            cur.execute(f"SELECT COUNT(*) FROM {table};")
+            row = cur.fetchone()
+            counts[table] = row[0] if row else 0
+        except Exception:
+            counts[table] = None
+    return counts
 
 
-def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_SIZE) -> bool:
+def clear_tables(cur):
+    """Truncate tables in reverse foreign key order."""
+    print("[INFO] Clearing existing tables before import...")
+    for table in reversed(TARGET_TABLES):
+        try:
+            cur.execute(f"TRUNCATE TABLE {table} CASCADE;")
+        except Exception as e:
+            print(f"  [WARN] Truncate {table}: {e}")
+    print("[OK] Tables cleared successfully.")
+
+
+def import_seed(
+    seed_path: Path,
+    password: Optional[str] = None,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    force: bool = False,
+) -> bool:
     """
     Stream and execute seed.sql inside a single transaction.
     Preserves SQL BEGIN; and COMMIT; boundaries and halts/rolls back on first error.
     """
-    if not HOST or not USER:
-        print("[ERROR] Set SUPABASE_HOST and SUPABASE_USER before importing.")
-        return False
-
-    print(f"\n[INFO] Connecting to Supabase at {HOST}:{PORT}...")
+    print(f"\n[INFO] Connecting to Supabase...")
     try:
-        conn = psycopg.connect(
-            host=HOST,
-            port=PORT,
-            dbname=DBNAME,
-            user=USER,
-            password=password,
-            sslmode="require",
-            connect_timeout=CONNECT_TIMEOUT,
-            autocommit=True,  # Allows SQL script BEGIN; and COMMIT; to manage transaction boundaries
-        )
+        conn = get_connection(password_override=password)
     except Exception as e:
-        # Do not expose credentials in error output
         print(f"[ERROR] Failed to connect to Supabase: {type(e).__name__}: {e}")
         return False
 
     with conn:
         with conn.cursor() as cur:
-            # Step 1: Pre-flight check on existing table contents
-            print("[INFO] Checking target tables for existing data...")
-            if not check_tables_empty(cur):
-                return False
+            # Check existing data
+            counts = check_table_counts(cur)
+            non_empty = {k: v for k, v in counts.items() if v and v > 0}
 
-            print("[INFO] Target database is clean. All 12 tables are empty.")
+            if non_empty:
+                if not force:
+                    print("\n[NOTICE] Supabase target tables already contain records:")
+                    for tbl, c in non_empty.items():
+                        print(f"  - {tbl:<16}: {c:>6,d} records")
+                    print("\nTo safely check counts without changing data, run:")
+                    print("    python scripts/import_supabase_seed.py --check-only")
+                    print("\nTo overwrite and re-seed, run with the --force flag:")
+                    print("    python scripts/import_supabase_seed.py --force")
+                    return False
+                else:
+                    clear_tables(cur)
+
             print(f"[INFO] Streaming seed from {seed_path} (batch size: {batch_size})...")
 
             start_time = time.time()
@@ -142,7 +189,6 @@ def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_
 
                         # Detect table section header comment
                         if stripped.startswith("-- Table:"):
-                            # Flush any pending batch from previous table before switching
                             if batch:
                                 cur.execute("\n".join(batch))
                                 total_statements += len(batch)
@@ -151,7 +197,7 @@ def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_
                             print(f"  -> Importing table: {current_table}...")
                             continue
 
-                        # Skip empty lines and other comments
+                        # Skip comments and empty lines
                         if not stripped or stripped.startswith("--"):
                             continue
 
@@ -163,45 +209,42 @@ def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_
                             continue
 
                         if stripped == "COMMIT;":
-                            # Flush remaining batch before verification and commit
                             if batch:
                                 cur.execute("\n".join(batch))
                                 total_statements += len(batch)
                                 batch = []
 
-                            # Verify row counts in all tables within the open transaction BEFORE committing
+                            # Pre-commit verification
                             print("\n[INFO] Pre-commit row count verification inside open transaction:")
                             total_rows = 0
                             mismatches = {}
                             for table in TARGET_TABLES:
                                 cur.execute(f"SELECT COUNT(*) FROM {table};")
-                                count = cur.fetchone()[0]
+                                count_row = cur.fetchone()
+                                count = count_row[0] if count_row else 0
                                 total_rows += count
                                 expected = EXPECTED_COUNTS.get(table)
                                 if expected is not None and count != expected:
                                     mismatches[table] = (count, expected)
-                                    print(f"  ✗ {table}: {count:,} rows (expected: {expected:,})")
+                                    print(f"  [MISMATCH] {table}: {count:,} rows (expected: {expected:,})")
                                 else:
-                                    print(f"  ✓ {table}: {count:,} rows")
+                                    print(f"  [OK] {table}: {count:,} rows")
 
                             if mismatches:
-                                print("\n[ERROR] Row count mismatch detected before commit! Rolling back entire transaction...")
+                                print("\n[ERROR] Row count mismatch detected before commit! Rolling back...")
                                 cur.execute("ROLLBACK;")
                                 in_transaction = False
-                                print("[INFO] Transaction rolled back. Zero rows committed to database.")
-                                print("[ERROR] Mismatched tables:")
+                                print("[INFO] Transaction rolled back. Zero rows committed.")
                                 for table, (actual, exp) in mismatches.items():
                                     print(f"  - {table}: actual {actual:,} vs expected {exp:,}")
                                 return False
 
-                            # All counts match expected values; safe to commit
                             cur.execute("COMMIT;")
                             in_transaction = False
                             print("[INFO] All row counts verified against expected values.")
                             print("[INFO] Transaction committed (COMMIT;).")
                             continue
 
-                        # Accumulate statement
                         batch.append(stripped)
 
                         if len(batch) >= batch_size:
@@ -211,7 +254,6 @@ def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_
                             if total_statements % 25000 < batch_size:
                                 print(f"     ... {total_statements:,} statements executed")
 
-                # If file ended while still in transaction without COMMIT;
                 if in_transaction:
                     print("\n[ERROR] File ended without COMMIT;. Rolling back transaction...")
                     cur.execute("ROLLBACK;")
@@ -223,14 +265,12 @@ def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_
                 print(f"[INFO] Total INSERT statements executed: {total_statements:,}")
                 print(f"[INFO] Total verified rows committed to Supabase: {total_rows:,}")
                 print(f"[INFO] Total elapsed time: {elapsed:.1f} seconds")
-
                 return True
 
             except Exception as e:
                 print(f"\n[ERROR] SQL execution failed at line {last_line_num}:")
                 print(f"  {type(e).__name__}: {e}")
 
-                # Rollback transaction if active or in error
                 if in_transaction or conn.info.transaction_status in (
                     TransactionStatus.INTRANS,
                     TransactionStatus.INERROR,
@@ -238,7 +278,7 @@ def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_
                     print("[INFO] Rolling back transaction...")
                     try:
                         cur.execute("ROLLBACK;")
-                        print("[INFO] Transaction successfully rolled back. No changes were committed.")
+                        print("[INFO] Transaction successfully rolled back.")
                     except Exception as rb_err:
                         print(f"[WARN] Rollback attempt encountered: {rb_err}")
 
@@ -247,6 +287,12 @@ def import_seed(seed_path: Path, password: str, batch_size: int = DEFAULT_BATCH_
 
 def main():
     parser = argparse.ArgumentParser(description="Safely import YottaFlex SQL seed into Supabase.")
+    parser.add_argument(
+        "--check-only",
+        "-c",
+        action="store_true",
+        help="Check table row counts in Supabase without modifying any data",
+    )
     parser.add_argument(
         "--seed-file",
         type=Path,
@@ -259,24 +305,69 @@ def main():
         default=DEFAULT_BATCH_SIZE,
         help=f"Number of INSERT statements per multi-statement query chunk (default: {DEFAULT_BATCH_SIZE})",
     )
+    parser.add_argument(
+        "--password",
+        type=str,
+        default=None,
+        help="Supabase database password (defaults to SUPABASE_PASSWORD from .env)",
+    )
+    parser.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Force re-import and clear existing records",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
     print("YottaFlex Supabase Seed Importer (Single Transaction)")
     print("=" * 70)
 
-    # 1. Verify seed file exists and non-empty BEFORE connecting
+    # 1. Check-only mode
+    if args.check_only:
+        password = args.password or os.getenv("SUPABASE_PASSWORD")
+        if not password:
+            password = getpass.getpass("Enter your Supabase database password: ")
+        try:
+            conn = get_connection(password_override=password)
+            with conn.cursor() as cur:
+                counts = check_table_counts(cur)
+                print("\nCurrent Supabase Table Counts:")
+                total = 0
+                for table, count in counts.items():
+                    if count is not None:
+                        expected = EXPECTED_COUNTS.get(table, 0)
+                        status = "[OK]" if count == expected else f"[expected {expected:,}]"
+                        print(f"  {table:<16}: {count:>8,d}  {status}")
+                        total += count
+                    else:
+                        print(f"  {table:<16}: [TABLE NOT FOUND]")
+                print(f"  {'TOTAL':<16}: {total:>8,d}")
+            conn.close()
+            return
+        except Exception as e:
+            print(f"[ERROR] Failed to query Supabase: {e}")
+            sys.exit(1)
+
+    # 2. Verify seed file exists and non-empty
     size_bytes = check_seed_file(args.seed_file)
     print(f"[OK] Seed file found: {args.seed_file} ({size_bytes / (1024 * 1024):.2f} MB)")
 
-    # 2. Prompt for password securely using identical method as test_supabase.py
-    password = getpass.getpass("Enter your Supabase database password: ")
+    # 3. Retrieve password (env, arg, or fallback prompt)
+    password = args.password or os.getenv("SUPABASE_PASSWORD")
+    if not password:
+        password = getpass.getpass("Enter your Supabase database password: ")
     if not password:
         print("[ERROR] Password cannot be empty.")
         sys.exit(1)
 
-    # 3. Execute import in single transaction
-    success = import_seed(args.seed_file, password, batch_size=args.batch_size)
+    # 4. Execute import
+    success = import_seed(
+        args.seed_file,
+        password=password,
+        batch_size=args.batch_size,
+        force=args.force,
+    )
     if not success:
         sys.exit(1)
 

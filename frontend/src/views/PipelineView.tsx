@@ -15,9 +15,10 @@ import {
 
 interface PipelineViewProps {
   onSelectLead: (leadId: string) => void;
+  initialStage?: string;
 }
 
-export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
+export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead, initialStage }) => {
   const [opportunities, setOpportunities] = useState<OpportunityItem[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -26,7 +27,8 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
 
   // Filters
   const [search, setSearch] = useState("");
-  const [stageFilter, setStageFilter] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [stageFilter, setStageFilter] = useState(initialStage || "");
   const [duplicateFilter, setDuplicateFilter] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -36,13 +38,23 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
   const [closedWonCount, setClosedWonCount] = useState<number>(0);
   const [closedWonValue, setClosedWonValue] = useState<number>(0);
   const [totalPipelineValue, setTotalPipelineValue] = useState<number>(0);
+  const [duplicateOppsCount, setDuplicateOppsCount] = useState<number>(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   useEffect(() => {
     // Load summary from dashboard to populate top KPI cards
     api.getDashboardSummary().then((sum) => {
-      setTotalPipelineValue(sum.total_pipeline_value);
-      setClosedWonCount(sum.opportunity_stages?.closed_won || 0);
-      setClosedWonValue(sum.total_pipeline_value * 0.17); // Derived approximate revenue
+      setTotalPipelineValue(sum.total_pipeline_value || 0);
+      const closedWon = sum.opportunity_stages?.closed_won || 0;
+      setClosedWonCount(closedWon);
+      setDuplicateOppsCount(sum.duplicate_opportunities_count ?? 0);
+      setClosedWonValue(closedWon > 0 ? ((sum as any).closed_won_value || (sum.total_pipeline_value || 0) * 0.17) : 0);
     }).catch(() => {});
   }, []);
 
@@ -56,7 +68,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
         page_size: pageSize,
         stage: stageFilter || undefined,
         is_duplicate: isDupParam,
-        search: search.trim() || undefined,
+        search: debouncedSearch.trim() || undefined,
       });
       setOpportunities(res.items);
       setTotal(res.total);
@@ -70,7 +82,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
 
   useEffect(() => {
     loadOpportunities();
-  }, [page, pageSize, stageFilter, duplicateFilter, search]);
+  }, [page, pageSize, stageFilter, duplicateFilter, debouncedSearch]);
 
   const hasFilters = Boolean(search || stageFilter || duplicateFilter);
   const clearFilters = () => {
@@ -82,9 +94,9 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
 
   const formatCurrency = (val: number | string) => {
     const num = Number(val) || 0;
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat("en-IN", {
       style: "currency",
-      currency: "USD",
+      currency: "INR",
       maximumFractionDigits: 0,
     }).format(num);
   };
@@ -125,10 +137,10 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
         <div className="stat-card">
           <div className="stat-header">
             <span className="stat-label">Pipeline Volume</span>
-            <DollarSign size={15} color="var(--primary)" />
+            <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--primary)" }}>₹</span>
           </div>
           <div className="stat-value">
-            {totalPipelineValue ? `$${(totalPipelineValue / 1_000_000).toFixed(1)}M` : "$761.5M"}
+            {`₹${(totalPipelineValue / 10_000_000).toFixed(2)} Cr`}
           </div>
           <div className="stat-sub">Aggregated contract value</div>
         </div>
@@ -139,7 +151,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
             <CheckCircle2 size={15} color="var(--success)" />
           </div>
           <div className="stat-value" style={{ color: "var(--success)" }}>
-            {closedWonCount > 0 ? closedWonCount.toLocaleString() : "512"}
+            {closedWonCount.toLocaleString()}
           </div>
           <div className="stat-sub">Revenue booked</div>
         </div>
@@ -149,7 +161,9 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
             <span className="stat-label">Duplicate Opps Flagged</span>
             <AlertTriangle size={15} color="var(--warning)" />
           </div>
-          <div className="stat-value" style={{ color: "var(--warning)" }}>1</div>
+          <div className="stat-value" style={{ color: "var(--warning)" }}>
+            {duplicateOppsCount.toLocaleString()}
+          </div>
           <div className="stat-sub">Excluded from pipeline forecast</div>
         </div>
       </div>
@@ -272,7 +286,24 @@ export const PipelineView: React.FC<PipelineViewProps> = ({ onSelectLead }) => {
                   <td>
                     <span className="id-tag" title={opp.opportunity_id}>{opp.opportunity_id}</span>
                   </td>
-                  <td>{getStageBadge(opp.stage)}</td>
+                  <td>
+                    <div>
+                      {getStageBadge(opp.stage)}
+                      {opp.won_lost_reason && (
+                        <div
+                          style={{
+                            fontSize: "11px",
+                            color: opp.stage === "closed_won" ? "var(--success)" : "var(--text-muted)",
+                            marginTop: "2px",
+                            fontWeight: 500,
+                          }}
+                          title={`Outcome: ${opp.won_lost_reason}${opp.competitor ? ' • Competitor: ' + opp.competitor : ''}`}
+                        >
+                          {opp.won_lost_reason.replace(/_/g, " ")}
+                        </div>
+                      )}
+                    </div>
+                  </td>
                   <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 500, color: "var(--text-main)" }}>
                     {formatCurrency(opp.amount)}
                   </td>

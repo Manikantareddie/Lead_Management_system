@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ArrowUpRight,
   Clock,
+  CheckCircle2,
 } from "lucide-react";
 
 interface TasksViewProps {
@@ -39,8 +40,26 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
   const [activitySearch, setActivitySearch] = useState("");
   const [activityType, setActivityType] = useState("");
 
+  const [debouncedTaskSearch, setDebouncedTaskSearch] = useState("");
+  const [debouncedActivitySearch, setDebouncedActivitySearch] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedTaskSearch(taskSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [taskSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedActivitySearch(activitySearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [activitySearch]);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Pre-load totals on initial mount so both tab badges display real counts
   useEffect(() => {
@@ -62,7 +81,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
         status: taskStatus || undefined,
         priority: taskPriority || undefined,
         task_type: taskType || undefined,
-        search: taskSearch.trim() || undefined,
+        search: debouncedTaskSearch.trim() || undefined,
       });
       setTasks(res.items);
       setTaskTotal(res.total);
@@ -82,7 +101,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
         page: activityPage,
         page_size: activityPageSize,
         activity_type: activityType || undefined,
-        search: activitySearch.trim() || undefined,
+        search: debouncedActivitySearch.trim() || undefined,
       });
       setActivities(res.items);
       setActivityTotal(res.total);
@@ -107,11 +126,11 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
     taskStatus,
     taskPriority,
     taskType,
-    taskSearch,
+    debouncedTaskSearch,
     activityPage,
     activityPageSize,
     activityType,
-    activitySearch,
+    debouncedActivitySearch,
   ]);
 
   const clearTaskFilters = () => {
@@ -126,6 +145,21 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
     setActivitySearch("");
     setActivityType("");
     setActivityPage(1);
+  };
+
+  const handleStatusChange = async (taskId: string, newStatus: string) => {
+    try {
+      await api.updateTask(taskId, { status: newStatus });
+      setTasks((prev) =>
+        prev.map((t) => (t.task_id === taskId ? { ...t, status: newStatus } : t))
+      );
+      const readableStatus = newStatus.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      setToastMessage(`Task ${taskId} status updated to "${readableStatus}".`);
+      setTimeout(() => setToastMessage(null), 3500);
+    } catch (err: any) {
+      setError("Failed to update task status: " + err.message);
+      setTimeout(() => setError(null), 5000);
+    }
   };
 
   const hasTaskFilters = Boolean(taskSearch || taskStatus || taskPriority || taskType);
@@ -175,7 +209,47 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
   };
 
   return (
-    <div className="view-container">
+    <div className="view-container" style={{ position: "relative" }}>
+      {/* Toast Pop-up Notification */}
+      {toastMessage && (
+        <div
+          style={{
+            position: "fixed",
+            top: "24px",
+            right: "24px",
+            zIndex: 9999,
+            backgroundColor: "#065f46",
+            color: "#ffffff",
+            padding: "12px 18px",
+            borderRadius: "8px",
+            boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1)",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            fontSize: "13px",
+            fontWeight: 500,
+            animation: "slideInRight 0.2s ease-out",
+          }}
+        >
+          <CheckCircle2 size={17} color="#34d399" />
+          <span>{toastMessage}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#a7f3d0",
+              cursor: "pointer",
+              padding: "0 0 0 6px",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
       {/* Top Segmented View Switcher */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
         <div className="segmented-control">
@@ -418,7 +492,20 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
                       </span>
                     </td>
                     <td>{getPriorityBadge(task.priority)}</td>
-                    <td>{getStatusBadge(task.status)}</td>
+                    <td>
+                      <select
+                        className="select-compact"
+                        style={{ height: "26px", fontSize: "11px", padding: "0 6px" }}
+                        value={task.status}
+                        onChange={(e) => handleStatusChange(task.task_id, e.target.value)}
+                        title="Change task status"
+                      >
+                        <option value="open">Open</option>
+                        <option value="in_progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                        <option value="cancelled">Cancelled</option>
+                      </select>
+                    </td>
                     <td>
                       <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
                         {task.due_date}

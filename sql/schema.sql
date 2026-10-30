@@ -204,7 +204,26 @@ CREATE TABLE IF NOT EXISTS stage_histories (
 
 CREATE INDEX IF NOT EXISTS idx_stage_histories_lead ON stage_histories(lead_id);
 
--- 13. Ground Truth Exceptions (Separate audit/evaluation table)
+-- 13. TaskDecisions (Audit log of evaluated outreach decisions)
+CREATE TABLE IF NOT EXISTS task_decisions (
+    decision_id VARCHAR(32) PRIMARY KEY,
+    lead_id VARCHAR(32) NOT NULL REFERENCES leads(lead_id) ON DELETE CASCADE,
+    contact_id VARCHAR(32) REFERENCES contacts(contact_id) ON DELETE SET NULL,
+    task_type VARCHAR(50) NOT NULL,
+    channel VARCHAR(50) NOT NULL,
+    decision VARCHAR(50) NOT NULL,
+    reason TEXT NOT NULL,
+    evaluated_at TIMESTAMPTZ NOT NULL,
+    consent_status_at_evaluation VARCHAR(50),
+    lead_score INTEGER,
+    assigned_salesrep_id VARCHAR(32) REFERENCES salesreps(salesrep_id) ON DELETE SET NULL,
+    task_id VARCHAR(64) REFERENCES tasks(task_id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_decisions_lead ON task_decisions(lead_id);
+CREATE INDEX IF NOT EXISTS idx_task_decisions_task ON task_decisions(task_id);
+
+-- 14. Ground Truth Exceptions (Separate audit/evaluation table)
 CREATE TABLE IF NOT EXISTS ground_truth_exceptions (
     exception_id VARCHAR(32) PRIMARY KEY,
     issue_type VARCHAR(100) NOT NULL,

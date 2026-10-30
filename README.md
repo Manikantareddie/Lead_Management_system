@@ -1,185 +1,210 @@
 # YottaFlex Lead Intelligence & Operations Console
 
-Enterprise lead scoring, routing governance, consent compliance, and sales operations console built to generate, validate, audit, and operate synthetic CRM datasets at enterprise scale (168,193+ records).
+Enterprise lead scoring, routing governance, consent compliance, and sales operations console built to generate, validate, audit, and operate synthetic CRM datasets at enterprise scale (206,609 records across 13 relational tables), backed by Supabase PostgreSQL and an indexed local fallback engine.
 
 ---
 
-======================================================
-## 1. Quick Start: Launching the Application
+## 🚀 How to Run the Project
+
+### Terminal 1: Start the Backend (FastAPI)
+Run this command from the project root:
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+- **Backend API URL:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
+- **Interactive Swagger Docs:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- **Health Check:** [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)
+
+### Terminal 2: Start the Frontend Console (React + Vite)
+In a **second terminal**, run:
+```powershell
+cd frontend
+npm run dev
+```
+*(Or from the project root: `npm.cmd --prefix frontend run dev`)*
+- **Web App Console:** [http://localhost:5173](http://localhost:5173)
+
+### Verification Commands
+```powershell
+# Check live Supabase table counts & database status
+.\.venv\Scripts\python.exe scripts/migrate_and_seed_supabase.py --check-only
+
+# Run backend automated test suite (87 tests)
+.\.venv\Scripts\python.exe -m pytest -q
+
+# Step 10: Verify 100% bitwise reproducibility across runs
+.\.venv\Scripts\python.exe scripts/verify_reproducibility.py
+
+# Step 8 & 9: Run 12-engine dataset validation report
+.\.venv\Scripts\python.exe scripts/run_validation_report.py
+
+# Production build of frontend
+npm.cmd --prefix frontend run build
+```
+
+---
+
+## 1. Project Prerequisites & First-Time Setup
 
 ### Prerequisites
-- Python 3.14+ with local virtual environment (`.venv`)
-- Node.js v18+ and npm (tested with Node v24.15.0 / npm 11.12.1)
+- Python 3.11+ or 3.12+ with virtual environment (`.venv`)
+- Node.js v18+ and npm (tested with Node v22+ / npm 10+)
 
-### First-time setup
-Run these commands from the project root:
+### First-Time Installation
 ```powershell
-py -3.14 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install fastapi uvicorn
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 npm.cmd --prefix frontend ci
 ```
 
-### Start the Backend API (FastAPI)
-In one terminal, from the project root:
+---
+
+## 2. Supabase PostgreSQL Integration & Migration
+
+YottaFlex integrates with Supabase PostgreSQL as its primary production database while maintaining an offline-capable indexed fallback engine.
+
+### Connecting to Supabase
+Set the `DATABASE_URL` environment variable (in Render, local `.env`, or command environment):
 ```powershell
-.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+$env:DATABASE_URL="postgresql://postgres.your_project:your_password@aws-0-region.pooler.supabase.com:6543/postgres"
 ```
+Or specify discrete connection parameters (`SUPABASE_HOST`, `SUPABASE_PORT`, `SUPABASE_DBNAME`, `SUPABASE_USER`, `SUPABASE_PASSWORD`).
 
-- **Backend API URL:** `http://127.0.0.1:8000`
-- **Interactive Swagger Docs:** `http://127.0.0.1:8000/docs`
-- **Health Check:** `http://127.0.0.1:8000/health`
-
-### Start the Frontend Console (React + Vite)
-In a second terminal, from the project root:
+### Safe, Idempotent Database Migration & Seed
+Run the migration CLI to initialize the PostgreSQL schema and import records:
 ```powershell
-npm.cmd --prefix frontend run dev -- --host 127.0.0.1 --port 5173
+# Verify connection and test schema/data idempotency
+python scripts/migrate_to_supabase.py --check-only
+
+# Apply DDL schema and create indexes
+python scripts/migrate_to_supabase.py --schema-only
+
+# Complete import of all 13 tables (idempotent ON CONFLICT DO NOTHING)
+python scripts/migrate_to_supabase.py --data-dir data/generated_full
 ```
 
-Open the **Local** URL printed by Vite (normally `http://127.0.0.1:5173/`). If that port is already in use, Vite automatically selects another port and prints its URL. Stop either server with `Ctrl+C` in its terminal.
+The migration engine safely imports all 13 tables in strict foreign-key dependency order:
+1. `companies` (5,000 rows)
+2. `contacts` (10,000 rows)
+3. `salesreps` (100 rows)
+4. `score_rules` (3 rows)
+5. `campaigns` (20 rows)
+6. `leads` (20,000 rows)
+7. `lead_campaigns` (29,974 rows)
+8. `consents` (12,190 rows)
+9. `activities` (60,000 rows)
+10. `tasks` (25,000 rows)
+11. `task_decisions` (38,416 rows)
+12. `opportunities` (3,000 rows)
+13. `stage_histories` (2,906 rows)
 
-### Deploy the backend to Render
-The included `render.yaml` configures the FastAPI backend as a Render web service. In Render, create a new Blueprint and select this GitHub repository; Render will build and deploy the API using this configuration. After deployment, verify the service's `/health` endpoint.
+*Total: 206,609 rows.*
 
-The configuration uses Render's free plan. The full dataset uses about 405 MB of memory in the local backend, so this plan may exceed its memory limit and restart. If that happens, use a Render plan with more memory.
-
-### Deploy the frontend to Netlify
-The frontend is a static Vite application and can be deployed from this repository using the included `netlify.toml` configuration. In Netlify, create a site by importing the GitHub repository; Netlify will use the configured build command and publish directory.
-
-After the backend is deployed, set the `VITE_API_BASE_URL` environment variable in the Netlify site's build settings to the public HTTPS base URL of the Render service (for example, `https://yottaflex-api.onrender.com`, with no trailing slash), then trigger a new deploy. Without this variable, the frontend uses `http://127.0.0.1:8000`, which is only suitable for local development.
+> 📘 **Full Data Dictionary & Schema Specification**: See [DATA_DICTIONARY.md](DATA_DICTIONARY.md) for field-by-field definitions, enums, units, uniqueness constraints, and validation rules across all entities.
 
 ---
 
-## 2. System Architecture
+## 3. Production Deployment Architecture
 
 ```
-yottaflex-lead-management/
-├── backend/                  # FastAPI Application & Dual Data Store
-│   ├── config.py             # Server settings & dataset path definitions
-│   ├── database.py           # In-memory indexed datastore (168k rows) & Supabase connector
-│   └── main.py               # REST API endpoints & CORS middleware
-├── frontend/                 # React 19 + TypeScript + Vite Console
-│   ├── src/
-│   │   ├── components/       # Enterprise UI components (Sidebar, Header)
-│   │   ├── services/api.ts   # Type-safe API client
-│   │   ├── types.ts          # Complete TypeScript domain contracts
-│   │   ├── views/            # Operational Console Views:
-│   │   │   ├── DashboardView.tsx       # KPI metrics & distribution charts
-│   │   │   ├── LeadsView.tsx           # Search, stage/territory filters, pagination
-│   │   │   ├── LeadDetailDrawer.tsx    # 360° lead drawer with scoring, routing & audit tabs
-│   │   │   ├── TasksView.tsx           # Cadence tasks & logged prospect activity
-│   │   │   ├── PipelineView.tsx        # Opportunity stages & deduplication audit
-│   │   │   ├── InvestigationsView.tsx  # Forensic audit for 5 benchmark anomalies
-│   │   │   └── DataQualityView.tsx     # CSV validation status & run engine
-│   │   └── index.css         # Enterprise design tokens (calm slate/navy light-first theme)
-├── data/
-│   ├── generated_full/       # Full-scale dataset (168,193 rows across 12 CSV tables)
-│   ├── generated/            # Baseline starter dataset
-│   └── ground_truth/         # Injected benchmark anomalies (exceptions.json, exceptions.csv)
-├── sql/
-│   ├── schema.sql            # PostgreSQL DDL with foreign keys and check constraints
-│   └── seed.sql              # Dependency-ordered SQL seed dataset
-├── src/                      # Core Business Logic & Data Engine
-│   ├── business/             # Scoring arithmetic, deduplication, routing, consent
-│   ├── generator/            # Synthetic data generation and export routines
-│   └── validation/           # Referential integrity & anomaly validation engine
-└── tests/                    # 86 Automated Pytest Tests (100% Passing)
-    ├── test_backend_api.py   # FastAPI endpoint tests (health, pagination, filters, drawer)
-    ├── test_business_rules.py
-    ├── test_deliverables.py
-    ├── test_exceptions_and_validation.py
-    ├── test_generator.py
-    └── test_stage1_regression.py
+                  ┌──────────────────────────────────────────────┐
+                  │ Netlify (Vite React 19 Frontend)             │
+                  │ - Mobile & Desktop Responsive Design         │
+                  │ - SPA Fallback Routing (/* -> /index.html)   │
+                  │ - VITE_API_BASE_URL -> Render Backend URL    │
+                  └───────────────────────┬──────────────────────┘
+                                          │ HTTPS REST API
+                                          ▼
+                  ┌──────────────────────────────────────────────┐
+                  │ Render Web Service (FastAPI Backend)         │
+                  │ - High-performance async uvicorn             │
+                  │ - Connection Pooling via psycopg 3           │
+                  │ - Zero in-memory footprint when on Supabase  │
+                  └───────────────────────┬──────────────────────┘
+                                          │ Parameterized SQL
+                                          ▼
+                  ┌──────────────────────────────────────────────┐
+                  │ Supabase PostgreSQL (Primary DB)             │
+                  │ - 13 Relational Tables & B-Tree Indexes      │
+                  │ - Isolated 5 Benchmark Anomaly Tables        │
+                  │ - Referential Integrity & Foreign Keys       │
+                  └──────────────────────────────────────────────┘
 ```
 
----
+### Render Deployment Configuration
+- Configured in `render.yaml`.
+- Set `DATABASE_URL` in the Render Environment Variables tab to your Supabase Transaction Pooler connection string (`port 6543`).
+- Service uses `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`.
 
-## 3. Operations Console Features
-
-### A. Operations Overview Dashboard
-- High-level KPIs: Total Leads (20,000), Active Tasks (25,000), Pipeline Value ($30.1M across 3,000 opportunities), Average Lead Score (57.1).
-- Lifecycle Stage Funnel: Visualizes progression (`New` → `Contacted` → `Qualified` → `Converted` / `Disqualified`).
-- Score Distribution Bands: Categorized into Enterprise Hot (80+), Warm (60-79), Moderate (40-59), and Cold (<40).
-- Territory Breakdown: North, South, East, West volume and rep allocation.
-- Quick navigation shortcuts into Leads Explorer and Anomaly Investigations.
-
-### B. Leads Explorer & 360° Lead Drawer
-- Search across contact names, emails, and company names.
-- Filter by Lifecycle Stage (`New`, `Contacted`, `Qualified`, `Converted`, `Disqualified`), Territory (`North`, `South`, `East`, `West`), and Duplicate status.
-- Sortable table columns with bounded pagination (25 records/page).
-- **360° Lead Detail Drawer:**
-  - **Overview Tab:** Contact profile, company firmographics, and formulaic score breakdown (`Lead Score = 0.50*Fit + 0.30*Intent + 0.20*Engagement`).
-  - **Routing Tab:** Assigned sales representative, product specialty match, territory match, and routing exception explanations.
-  - **Consent Tab:** Channel-specific consent status (`email`, `phone`), consent timestamps, withdrawal logs, and expiration dates.
-  - **Stage History Tab:** Chronological progression audit trail with transition timestamps and reasons.
-  - **Decision Audit Tab:** Telemetry from `task_decisions` logging candidate task evaluations (`created`, `rejected`, `deferred`).
-
-### C. Tasks & Activities Management
-- Operational outreach tasks with status (`Pending`, `In Progress`, `Completed`, `Overdue`, `Cancelled`) and priority filtering.
-- Activity log for sales cadence interactions (`Call`, `Email`, `Meeting`, `Demo`, `Note`) with logged outcomes and call durations.
-- Direct link to inspect the associated lead in the 360° drawer.
-
-### D. Revenue Pipeline & Opportunities
-- Pipeline deal tracking by stage (`Discovery`, `Proposal`, `Negotiation`, `Closed-Won`, `Closed-Lost`).
-- Deduplication filter to isolate duplicate opportunities created from duplicate leads.
-- Full contract values and target close dates.
-
-### E. Data Quality & Anomaly Investigations (Assessment Benchmark)
-Forensic audit view for the **5 required assessment anomaly scenarios**:
-1. `opted_out_lead_contacted`: Outbound task scheduled after consent withdrawal.
-2. `score_influenced_post_conversion`: Score recalculated after conversion timestamp.
-3. `lead_assigned_outside_territory`: Cross-territory assignment without exception flag.
-4. `duplicate_opportunity`: Inflated pipeline opportunity from duplicate lead.
-5. `stage_history_gap`: Discontinuous lifecycle progression in stage audit history.
-
-*Each investigation card provides: issue classification, severity, detailed description, triggering business rule, forensic structured payload, exact SQL detection query, recommended operational next steps, and a direct button to inspect the affected lead.*
-
-### F. Dataset Integrity & Validation Reports
-- Live report on dataset referential integrity (zero errors, zero warnings across 168k records).
-- Interactive **"Trigger Full Dataset Validation"** action button.
-- Comprehensive inventory of all 12 CSV deliverable tables and SQL schemas.
+### Netlify Deployment Configuration
+- Configured in `netlify.toml`.
+- Build command: `npm run build` from base directory `frontend`.
+- Set `VITE_API_BASE_URL` in Netlify Site Settings to your Render service URL (e.g. `https://yottaflex-api.onrender.com`).
 
 ---
 
-## 4. API Endpoints
+## 4. Key Fixes & Functional Improvements
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/health` | Health check, mode indicator, and active record counts |
-| `GET` | `/api/dashboard/summary` | Aggregate metrics, score bands, stage/territory distributions |
-| `GET` | `/api/leads` | Paginated lead explorer (params: `page`, `page_size`, `search`, `stage`, `territory`, `sort_by`, `sort_order`, `is_duplicate`) |
-| `GET` | `/api/leads/{lead_id}` | Full 360° lead profile with company, contact, rep, tasks, activities, opps, consent, and audit records |
-| `GET` | `/api/tasks` | Paginated tasks listing with `status`, `task_type`, `priority` filters |
-| `GET` | `/api/activities` | Paginated sales activity log with `activity_type` filter |
-| `GET` | `/api/opportunities` | Paginated pipeline deals with `stage` and `is_duplicate` filters |
-| `GET` | `/api/analytics/stages` | Lifecycle stage funnel distribution |
-| `GET` | `/api/analytics/territories`| Territory lead volume and sales rep allocations |
-| `GET` | `/api/investigations` | Forensic anomaly audit logs for 5 benchmark scenarios |
-| `GET` | `/api/validation/status` | Dataset integrity verification status |
-| `POST`| `/api/validation/run` | Execute on-demand verification against active dataset |
+1. **Supabase as Primary Runtime Database:**
+   - Parameterized SQL query execution for search, filters, pagination, score bands, funnel aggregations, and detail 360° joins.
+   - Clean connection pooling and error recovery.
+   - Offline fallback provider active when database credentials are not present.
+
+2. **Lead Lifecycle Progression & Opportunity Stages:**
+   - Valid leads progress through `New` → `Contacted` → `Qualified` → `Converted`.
+   - Converted leads generate realistic `closed_won` and `closed_lost` deals without fabricating KPIs.
+   - Removed the hardcoded `512` fallback and duplicate opp fallback; both calculate from live records.
+
+3. **Central Territory Filter:**
+   - Restored `Central` in the territory filter options alongside `North`, `South`, `East`, and `West`, matching all 3,998 central leads.
+
+4. **Meaningful Task Statuses & End-to-End Task Actions:**
+   - Tasks feature a realistic status distribution: `open`, `in_progress`, `completed`, and `cancelled`.
+   - Users can update task statuses directly from the Tasks table and from the 360° Lead Detail Drawer.
+   - Users can create new follow-up tasks associated with leads via `POST /api/tasks`, persisting to Supabase and recording an audit trail in `task_decisions`.
+
+5. **Lead Scoring Governance:**
+   - Raw formula string is hidden from the UI in favor of clean component scorecard cards (Fit 50%, Intent 30%, Engagement 20%), while backend calculation logic is preserved.
+
+6. **Responsive Layout:**
+   - Clean responsive navigation with mobile drawer, hamburger toggle on screens ≤1024px, and adaptive stat cards on tablet/mobile.
+
+7. **Artifact Cleanup:**
+   - Removed unreferenced Vite placeholder assets (`hero.png`, `react.svg`, `vite.svg`, `App.css`, `icons.svg`).
+   - Removed duplicate `data/generated/ground_truth_exceptions.json`, preserving canonical `data/ground_truth/exceptions.json`.
 
 ---
 
-## 5. Automated Testing & Verification
+## 5. Automated Test Suite
 
-Run the complete test suite (86 passing tests):
+Run the full automated test suite (87 tests, 100% passing):
 ```powershell
-.venv\Scripts\python.exe -m pytest -v
+.\.venv\Scripts\python.exe -m pytest -v
 ```
 
 Test breakdown:
-- `tests/test_backend_api.py`: 8 tests covering health, dashboard calculations, pagination, filtering, 404 handling, 360° drawer relationships, investigations, and validation endpoints.
-- `tests/test_stage1_regression.py`: 14 tests for routing governance, consent gating, and decision audit logs.
-- `tests/test_business_rules.py`: 10 tests for score clamping, deduplication, stage transitions, and consent revocation.
-- `tests/test_exceptions_and_validation.py`: 8 tests verifying baseline dataset validity and detection of all 5 injected benchmark anomalies.
-- `tests/test_generator.py`: 42 tests verifying schema formats, primary key uniqueness, foreign key integrity, and determinism.
-- `tests/test_deliverables.py`: 4 tests verifying scale configurations, JSON exports, and SQL DDL.
+- `tests/test_backend_api.py`: FastAPI endpoints, health checks, pagination, filters, 360° drawer relationships, investigations, task create/update mutations.
+- `tests/test_stage1_regression.py`: Routing governance, consent gating, and decision audit logs.
+- `tests/test_business_rules.py`: Score bounds, deduplication, stage transitions, and consent revocation.
+- `tests/test_exceptions_and_validation.py`: Clean baseline verification and detection of all 5 benchmark anomaly scenarios.
+- `tests/test_generator.py`: Synthetic generator determinism, primary/foreign key integrity, and enum compliance.
+- `tests/test_deliverables.py`: Full-scale configurations, JSON deliverables, schema DDL (including `task_decisions`), and SQL seeds.
 
 ---
 
 ## 6. Security and Compliance Safeguards
 
-1. **Zero Database Credential Leaks:** No database passwords or private API keys are committed or exposed to the client. `.env.example` is provided with placeholders only.
-2. **Dual-Mode Data Architecture:** The backend features a dual data access architecture. When Supabase environment variables are provided, it can connect via PostgreSQL; otherwise, it automatically operates on an in-memory indexed representation of the 168k full-scale CSV dataset with sub-15ms query latency and zero risk of database mutation.
-3. **Read-Only Operations:** The console is designed as a read-only operational intelligence and audit system to prevent accidental data modification during assessment evaluations.
-4. **Consent Safeguards:** Consent status is explicitly tracked and displayed. Outbound outreach tasks to opted-out contacts are flagged as regulatory violations (`opted_out_lead_contacted`).
-5. **CORS Configuration:** Explicitly configured to allow local frontend origins (`http://localhost:5173`, `http://127.0.0.1:5173`).
+1. **Zero Credential Exposure:** Database credentials, passwords, and service-role keys are strictly loaded from environment variables and never exposed in Git, browser code, or API responses.
+2. **Least Privilege & Role Safety:** The frontend interacts exclusively through the authenticated backend API; Supabase service-role keys are never sent to the browser.
+3. **Data Quality & Isolation:** Benchmark test anomalies are segregated from production baseline data.
+4. **CORS Hardening:** Configured with specific allowable origins and HTTP methods.
+
+---
+
+## 7. Data Provenance & Lawful Synthetic Generation Statement
+
+In strict adherence to synthetic data governance and lawful use guidelines:
+- **100% Synthetic Generation:** All 206,609 records across all 13 relational tables are generated deterministically using the Python standard library with a fixed random seed (`20261022`).
+- **Zero Real-World PII / No Scraping:** No web scraping, proprietary customer lists, or confidential personal identifiable information (PII) were harvested or utilized. All contact emails are mapped to the RFC 2606 reserved documentation domain (`@example.com`).
+- **Public Reference Inspiration:** Standard public B2B CRM domain concepts (e.g., Lead-to-Opportunity lifecycle models, Fit/Intent/Engagement scoring conventions, and territory routing matrices) were cited solely for structural schema inspiration without replicating copyrighted datasets.
+- **Held-Out Anomaly Separation:** The 5 controlled benchmark anomaly scenarios are explicitly isolated in `data/ground_truth/exceptions.json` and never leaked into input features or clean production records.

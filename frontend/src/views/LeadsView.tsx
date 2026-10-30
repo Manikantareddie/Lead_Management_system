@@ -7,14 +7,15 @@ import {
   ChevronLeft,
   ChevronRight,
   ArrowUpRight,
-  Filter,
 } from "lucide-react";
 
 interface LeadsViewProps {
   onSelectLead: (leadId: string) => void;
+  initialStage?: string;
+  initialScoreBand?: string;
 }
 
-export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead }) => {
+export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage, initialScoreBand }) => {
   const [data, setData] = useState<PaginatedResponse<LeadItem> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,15 +24,24 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead }) => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
-  const [stage, setStage] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [stage, setStage] = useState(initialStage || "");
   const [territory, setTerritory] = useState("");
+  const [scoreBand, setScoreBand] = useState(initialScoreBand || "");
   const [sortBy, setSortBy] = useState("created_at");
   const [sortOrder, setSortOrder] = useState("desc");
   const [isDuplicate, setIsDuplicate] = useState<boolean | undefined>(undefined);
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
     loadLeads();
-  }, [page, pageSize, stage, territory, sortBy, sortOrder, isDuplicate, search]);
+  }, [page, pageSize, stage, territory, scoreBand, sortBy, sortOrder, isDuplicate, debouncedSearch]);
 
   const loadLeads = async () => {
     try {
@@ -40,9 +50,10 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead }) => {
       const res = await api.getLeads({
         page,
         page_size: pageSize,
-        search: search.trim() || undefined,
+        search: debouncedSearch.trim() || undefined,
         stage: stage || undefined,
         territory: territory || undefined,
+        score_band: scoreBand || undefined,
         sort_by: sortBy,
         sort_order: sortOrder,
         is_duplicate: isDuplicate,
@@ -55,12 +66,13 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead }) => {
     }
   };
 
-  const hasFilters = Boolean(search || stage || territory || isDuplicate !== undefined || sortBy !== "created_at");
+  const hasFilters = Boolean(search || stage || territory || scoreBand || isDuplicate !== undefined || sortBy !== "created_at");
 
   const clearFilters = () => {
     setSearch("");
     setStage("");
     setTerritory("");
+    setScoreBand("");
     setIsDuplicate(undefined);
     setSortBy("created_at");
     setSortOrder("desc");
@@ -132,6 +144,22 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead }) => {
             <option value="Disqualified">Disqualified</option>
           </select>
 
+          {/* Score Band */}
+          <select
+            className="select-compact"
+            value={scoreBand}
+            onChange={(e) => {
+              setScoreBand(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All Scores</option>
+            <option value="85-100">85-100 (Exceptional)</option>
+            <option value="70-84">70-84 (High)</option>
+            <option value="40-69">40-69 (Medium)</option>
+            <option value="0-39">0-39 (Low)</option>
+          </select>
+
           {/* Territory */}
           <select
             className="select-compact"
@@ -146,6 +174,7 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead }) => {
             <option value="South">South</option>
             <option value="East">East</option>
             <option value="West">West</option>
+            <option value="Central">Central</option>
           </select>
 
           {/* Duplicate filter */}

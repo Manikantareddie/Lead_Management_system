@@ -350,12 +350,21 @@ def generate_leads(rng: random.Random, contacts: list[dict], companies: list[dic
         # Check for duplication against earlier leads via O(1) lookup.
         original = leads_by_detection_key.get(detection_key)
 
+        base_status = status_from_score(lead_score)
+        # Qualified canonical leads can advance to Converted with valid converted_at >= scored_at
+        if base_status == "Qualified" and not original and rng.random() < 0.35:
+            lead_status = "Converted"
+            converted_at = _iso(created_at + timedelta(days=rng.randint(2, 20)))
+        else:
+            lead_status = base_status
+            converted_at = None
+
         lead = {
             "lead_id": _lead_id(n),
             "contact_id": contact_id,
             "company_id": company_id,
             "source": rng.choice(SOURCES),
-            "status": status_from_score(lead_score),
+            "status": lead_status,
             "lead_score": lead_score,
             "fit_score": fit_score,
             "intent_score": intent_score,
@@ -367,7 +376,7 @@ def generate_leads(rng: random.Random, contacts: list[dict], companies: list[dic
             "product_interest": product_interest,
             "created_at": _iso(created_at),
             "updated_at": _iso(created_at),
-            "converted_at": None,
+            "converted_at": converted_at,
             "duplicate_detection_key": detection_key,
             "is_duplicate": False,
             "duplicate_of_lead_id": None,
@@ -645,10 +654,23 @@ def generate_tasks(rng: random.Random, leads: list[dict], salesreps: list[dict],
             task_seq_by_lead[lid] = seq
             tid = _task_id(lid, seq)
 
-            status = eval_result.get("status", "open")
-            priority = eval_result.get("priority", "medium")
             due_dt = datetime.strptime(cand_at, "%Y-%m-%dT%H:%M:%SZ")
-            completed_at = _iso(due_dt + timedelta(days=rng.randint(0, 7))) if status == "completed" else None
+            # Meaningful distribution of task statuses: open, in_progress, completed, cancelled
+            task_rand = rng.random()
+            if task_rand < 0.40:
+                status = "completed"
+                completed_at = _iso(due_dt + timedelta(days=rng.randint(0, 5)))
+            elif task_rand < 0.65:
+                status = "in_progress"
+                completed_at = None
+            elif task_rand < 0.75:
+                status = "cancelled"
+                completed_at = None
+            else:
+                status = "open"
+                completed_at = None
+
+            priority = eval_result.get("priority", "medium")
 
             tasks.append({
                 "task_id": tid,

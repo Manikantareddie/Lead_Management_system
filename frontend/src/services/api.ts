@@ -38,6 +38,7 @@ export const api = {
     search?: string;
     stage?: string;
     territory?: string;
+    score_band?: string;
     sort_by?: string;
     sort_order?: string;
     is_duplicate?: boolean;
@@ -48,6 +49,7 @@ export const api = {
     if (params.search) q.set("search", params.search);
     if (params.stage) q.set("stage", params.stage);
     if (params.territory) q.set("territory", params.territory);
+    if (params.score_band) q.set("score_band", params.score_band);
     if (params.sort_by) q.set("sort_by", params.sort_by);
     if (params.sort_order) q.set("sort_order", params.sort_order);
     if (params.is_duplicate !== undefined) q.set("is_duplicate", params.is_duplicate.toString());
@@ -56,6 +58,16 @@ export const api = {
   },
 
   getLeadDetails: (leadId: string) => fetchJson<LeadDetails>(`/api/leads/${leadId}`),
+
+  transitionLeadStage: (
+    leadId: string,
+    data: { to_stage: string; changed_by?: string; reason?: string }
+  ) =>
+    fetchJson<{ lead: any; stage_history: any }>(`/api/leads/${leadId}/transition`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
 
   getTasks: (params: {
     page?: number;
@@ -100,9 +112,42 @@ export const api = {
     return fetchJson<PaginatedResponse<OpportunityItem>>(`/api/opportunities?${q.toString()}`);
   },
 
+  createTask: (data: {
+    lead_id: string;
+    type?: string;
+    title?: string;
+    description?: string;
+    due_date?: string;
+    priority?: string;
+    status?: string;
+    assigned_to?: string;
+  }) =>
+    fetchJson<TaskItem>("/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
+  updateTask: (
+    taskId: string,
+    data: {
+      status?: string;
+      priority?: string;
+      title?: string;
+      description?: string;
+      due_date?: string;
+    }
+  ) =>
+    fetchJson<TaskItem>(`/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    }),
+
   getInvestigations: () => fetchJson<InvestigationItem[]>("/api/investigations"),
 
   getValidationStatus: () => fetchJson<ValidationStatus>("/api/validation/status"),
 
   runValidation: () => fetchJson<ValidationStatus>("/api/validation/run", { method: "POST" }),
 };
+

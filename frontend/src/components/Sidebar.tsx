@@ -7,6 +7,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Layers,
+  X,
 } from "lucide-react";
 
 export type NavTab = "dashboard" | "leads" | "tasks" | "pipeline" | "investigations" | "validation";
@@ -15,9 +16,17 @@ interface SidebarProps {
   currentTab: NavTab;
   onNavigate: (tab: NavTab) => void;
   anomaliesCount?: number;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, anomaliesCount = 5 }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  currentTab,
+  onNavigate,
+  anomaliesCount = 5,
+  isOpen = false,
+  onClose,
+}) => {
   const navItems: Array<{
     id: NavTab;
     label: string;
@@ -47,9 +56,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, anomal
     },
     {
       id: "investigations",
-      label: "Investigations",
+      label: "Governance Alerts",
       icon: <ShieldAlert size={17} />,
-      badge: `${anomaliesCount} findings`,
+      badge: String(anomaliesCount),
       badgeVariant: "warning",
     },
     {
@@ -60,20 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, anomal
   ];
 
   return (
-    <aside
-      style={{
-        width: "240px",
-        height: "100vh",
-        backgroundColor: "#ffffff",
-        borderRight: "1px solid var(--border-subtle)",
-        display: "flex",
-        flexDirection: "column",
-        position: "fixed",
-        top: 0,
-        left: 0,
-        zIndex: 50,
-      }}
-    >
+    <aside className={`app-sidebar ${isOpen ? "open" : ""}`}>
       {/* Brand Header */}
       <div
         style={{
@@ -81,32 +77,45 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, anomal
           borderBottom: "1px solid var(--border-subtle)",
           display: "flex",
           alignItems: "center",
+          justifyContent: "space-between",
           gap: "10px",
         }}
       >
-        <div
-          style={{
-            width: "32px",
-            height: "32px",
-            borderRadius: "6px",
-            backgroundColor: "var(--primary)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#ffffff",
-            flexShrink: 0,
-          }}
-        >
-          <Layers size={18} />
-        </div>
-        <div>
-          <div style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-main)", letterSpacing: "-0.01em" }}>
-            YottaFlex
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div
+            style={{
+              width: "32px",
+              height: "32px",
+              borderRadius: "6px",
+              backgroundColor: "var(--primary)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#ffffff",
+              flexShrink: 0,
+            }}
+          >
+            <Layers size={18} />
           </div>
-          <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 500 }}>
-            Operations Console
+          <div>
+            <div style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-main)", letterSpacing: "-0.01em" }}>
+              LMS
+            </div>
+            <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 500 }}>
+              Lead Management System
+            </div>
           </div>
         </div>
+        {onClose && (
+          <button
+            className="mobile-menu-btn"
+            style={{ margin: 0 }}
+            onClick={onClose}
+            aria-label="Close Navigation Menu"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
       {/* Navigation Items */}
@@ -117,7 +126,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, anomal
             return (
               <button
                 key={item.id}
-                onClick={() => onNavigate(item.id)}
+                onClick={() => {
+                  onNavigate(item.id);
+                  if (onClose) onClose();
+                }}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -154,36 +166,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onNavigate, anomal
           })}
         </div>
       </nav>
-
-      {/* Minimal Status Footer */}
-      <div
-        style={{
-          padding: "14px 18px",
-          borderTop: "1px solid var(--border-subtle)",
-          backgroundColor: "#fafafa",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <div
-            style={{
-              width: "7px",
-              height: "7px",
-              borderRadius: "50%",
-              backgroundColor: "var(--success)",
-              boxShadow: "0 0 0 2px rgba(5, 150, 105, 0.2)",
-            }}
-          />
-          <span style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)" }}>
-            Operational
-          </span>
-        </div>
-        <span style={{ fontSize: "11px", color: "var(--text-light)", fontFamily: "monospace" }}>
-          v1.0
-        </span>
-      </div>
     </aside>
   );
 };

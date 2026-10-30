@@ -1,14 +1,15 @@
 import React from "react";
 import type { NavTab } from "./Sidebar";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Menu } from "lucide-react";
 
 interface HeaderProps {
   currentTab: NavTab;
   onRefresh: () => void;
   isRefreshing?: boolean;
+  onToggleSidebar?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefreshing = false }) => {
+export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefreshing = false, onToggleSidebar }) => {
   const getTabInfo = (tab: NavTab) => {
     switch (tab) {
       case "dashboard":
@@ -20,9 +21,9 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefresh
       case "pipeline":
         return { title: "Opportunities Pipeline", subtitle: "Deal stages, revenue forecast, and deduplication" };
       case "investigations":
-        return { title: "Anomaly Investigations", subtitle: "Audit findings and forensic inspection for benchmark exceptions" };
+        return { title: "Governance & Compliance Alerts", subtitle: "Automated policy monitoring, consent compliance, and exception remediation" };
       case "validation":
-        return { title: "Dataset Integrity & Validation", subtitle: "Referential integrity checks and CSV deliverables" };
+        return { title: "Data Quality & System Health", subtitle: "Continuous referential integrity checks and schema validation" };
       default:
         return { title: "Operations Console", subtitle: "Enterprise Lead Management" };
     }
@@ -46,12 +47,24 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefresh
       }}
     >
       {/* Title & Context */}
-      <div>
-        <h1 style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-main)", margin: 0, lineHeight: 1.2 }}>
-          {title}
-        </h1>
-        <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "1px" }}>
-          {subtitle}
+      <div style={{ display: "flex", alignItems: "center" }}>
+        {onToggleSidebar && (
+          <button
+            className="mobile-menu-btn"
+            onClick={onToggleSidebar}
+            aria-label="Toggle Navigation Menu"
+            title="Toggle Menu"
+          >
+            <Menu size={16} />
+          </button>
+        )}
+        <div>
+          <h1 style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-main)", margin: 0, lineHeight: 1.2 }}>
+            {title}
+          </h1>
+          <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "1px" }}>
+            {subtitle}
+          </div>
         </div>
       </div>
 

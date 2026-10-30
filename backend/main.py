@@ -6,6 +6,7 @@ Provides RESTful endpoints for metrics, leads, tasks, opportunities, investigati
 from pathlib import Path
 import sys
 import time
+from typing import Optional
 
 # Ensure src/ and project root are on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -15,9 +16,9 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from pydantic import BaseModel, Field
 
 from backend.database import get_store
 from backend.config import HOST, PORT
@@ -28,35 +29,54 @@ app = FastAPI(
     description="Enterprise Lead Intelligence & Operations Console Backend"
 )
 
-# Enable CORS for local development (Vite frontend on 5173 / 5174 / 3000)
+# Enable CORS for local development and deployed frontend (Netlify, Render, local Vite)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
+class TaskCreateRequest(BaseModel):
+    lead_id: str
+    type: str = "email"
+    title: str = "Follow-up outreach"
+    description: Optional[str] = ""
+    due_date: Optional[str] = None
+    priority: str = "medium"
+    status: str = "open"
+    assigned_to: Optional[str] = None
+
+
+class TaskUpdateRequest(BaseModel):
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+class StageTransitionRequest(BaseModel):
+    to_stage: str
+    changed_by: Optional[str] = None
+    reason: Optional[str] = None
+
+
 @app.get("/health")
+@app.get("/api/health")
 def health_check():
-    """Health check endpoint providing engine status, data path, and system time."""
+    """Health check endpoint providing engine status, active datastore mode, and system time."""
     store = get_store()
+    counts = store.get_record_counts()
     return {
         "status": "healthy",
         "service": "yottaflex-operations-console",
         "version": "1.0.0",
-        "mode": "live_dataset_engine",
+        "mode": getattr(store, "mode", "live_dataset_engine"),
         "timestamp": time.time(),
-        "record_counts": {
-            "leads": len(store.leads),
-            "companies": len(store.companies),
-            "contacts": len(store.contacts),
-            "tasks": len(store.tasks),
-            "opportunities": len(store.opportunities),
-            "activities": len(store.activities),
-            "task_decisions": len(store.task_decisions),
-        }
+        "record_counts": counts,
     }
 
 
@@ -74,6 +94,7 @@ def get_leads(
     search: Optional[str] = None,
     stage: Optional[str] = None,
     territory: Optional[str] = None,
+    score_band: Optional[str] = None,
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
     is_duplicate: Optional[bool] = None,
@@ -86,6 +107,7 @@ def get_leads(
         search=search,
         stage=stage,
         territory=territory,
+        score_band=score_band,
         sort_by=sort_by,
         sort_order=sort_order,
         is_duplicate=is_duplicate,
@@ -100,6 +122,24 @@ def get_lead_details(lead_id: str):
     if not details:
         raise HTTPException(status_code=404, detail=f"Lead '{lead_id}' not found")
     return details
+
+
+@app.post("/api/leads/{lead_id}/transition")
+def transition_lead_stage(lead_id: str, req: StageTransitionRequest):
+    """Executes a rule-governed lifecycle stage transition, updates lead status, and appends to stage_histories."""
+    store = get_store()
+    try:
+        result = store.transition_lead_stage(
+            lead_id=lead_id,
+            to_stage=req.to_stage,
+            changed_by=req.changed_by,
+            reason=req.reason,
+        )
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/tasks")
@@ -121,6 +161,27 @@ def get_tasks(
         priority=priority,
         search=search,
     )
+
+
+@app.post("/api/tasks")
+def create_task(req: TaskCreateRequest):
+    """Creates a new follow-up task associated with a lead and logs audit telemetry."""
+    store = get_store()
+    try:
+        new_task = store.create_task(req.model_dump())
+        return new_task
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/api/tasks/{task_id}")
+def update_task(task_id: str, req: TaskUpdateRequest):
+    """Updates status, priority, or details of a task and persists changes."""
+    store = get_store()
+    updated = store.update_task(task_id, {k: v for k, v in req.model_dump().items() if v is not None})
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Task '{task_id}' not found")
+    return updated
 
 
 @app.get("/api/activities")

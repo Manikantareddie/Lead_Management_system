@@ -80,7 +80,7 @@ def test_sql_schema_exists():
     required_tables = [
         "companies", "contacts", "salesreps", "score_rules", "campaigns",
         "leads", "lead_campaigns", "consents", "activities", "tasks",
-        "opportunities", "stage_histories", "ground_truth_exceptions",
+        "task_decisions", "opportunities", "stage_histories", "ground_truth_exceptions",
     ]
     for tbl in required_tables:
         assert f"CREATE TABLE IF NOT EXISTS {tbl}" in sql, f"Missing table {tbl} in schema.sql"

@@ -12,7 +12,8 @@ import {
   Check,
   ArrowRight,
   Filter,
-  CheckCircle2,
+  ShieldCheck,
+  Code,
 } from "lucide-react";
 
 interface InvestigationsViewProps {
@@ -24,6 +25,7 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
   const [selectedSeverity, setSelectedSeverity] = useState<string>("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showSqlForId, setShowSqlForId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +37,7 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
       const data = await api.getInvestigations();
       setInvestigations(data);
     } catch (err: any) {
-      setError(err.message || "Failed to load anomaly investigations");
+      setError(err.message || "Failed to load governance alerts");
     } finally {
       setLoading(false);
     }
@@ -60,19 +62,19 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
       case "CRITICAL":
         return (
           <span className="badge badge-danger">
-            <AlertOctagon size={11} /> Critical
+            <AlertOctagon size={11} /> Critical Policy Breach
           </span>
         );
       case "HIGH":
         return (
           <span className="badge badge-warning">
-            <AlertTriangle size={11} /> High
+            <AlertTriangle size={11} /> High Priority Alert
           </span>
         );
       case "MEDIUM":
         return (
           <span className="badge badge-primary">
-            <Info size={11} /> Medium
+            <Info size={11} /> Medium Priority Alert
           </span>
         );
       default:
@@ -90,22 +92,23 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
 
   return (
     <div className="view-container">
-      {/* Overview Context Card */}
+      {/* Context Explainer Banner */}
       <div
         className="card"
         style={{
-          borderLeft: "3px solid var(--primary)",
+          borderLeft: "4px solid var(--primary)",
           backgroundColor: "#ffffff",
-          padding: "12px 16px",
+          padding: "14px 18px",
           display: "flex",
-          gap: "10px",
+          gap: "12px",
           alignItems: "center",
         }}
       >
-        <ShieldAlert size={18} color="var(--primary)" style={{ flexShrink: 0 }} />
-        <div style={{ fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.45 }}>
-          <strong style={{ color: "var(--text-main)" }}>Forensic Audit Workspace:</strong> Continuous
-          monitoring of the 5 controlled benchmark anomaly scenarios. Expand any finding below to inspect human-readable forensic evidence and verification SQL queries.
+        <ShieldCheck size={20} color="var(--primary)" style={{ flexShrink: 0 }} />
+        <div style={{ fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          <strong style={{ color: "var(--text-main)" }}>Automated Policy & Governance Monitoring:</strong> This
+          console continuously monitors the CRM pipeline for compliance, territory routing, and lifecycle stage violations.
+          Review quarantined exceptions below and execute guided remediation steps.
         </div>
       </div>
 
@@ -121,7 +124,7 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
             value={selectedSeverity}
             onChange={(e) => setSelectedSeverity(e.target.value)}
           >
-            <option value="">All Severities</option>
+            <option value="">All Alert Priorities</option>
             <option value="CRITICAL">Critical</option>
             <option value="HIGH">High</option>
             <option value="MEDIUM">Medium</option>
@@ -132,7 +135,7 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
           >
-            <option value="">All Categories</option>
+            <option value="">All Policy Categories</option>
             {categories.map((c) => (
               <option key={c} value={c}>
                 {c}
@@ -143,7 +146,7 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
 
         <div style={{ fontSize: "13px", color: "var(--text-muted)" }}>
           Showing <strong style={{ color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>{filtered.length}</strong> of{" "}
-          <span style={{ fontVariantNumeric: "tabular-nums" }}>{investigations.length}</span> Benchmark Findings
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>{investigations.length}</span> Active Alerts
         </div>
       </div>
 
@@ -153,23 +156,24 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
         </div>
       )}
 
-      {/* Investigation Cards */}
+      {/* Exception Alert Cards */}
       {loading && investigations.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
-          Loading forensic investigations...
+          Checking automated policy rules...
         </div>
       ) : filtered.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
-          No findings match the selected filters.
+          No active policy alerts match the selected filters.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
           {filtered.map((inv) => {
             const isExpanded = expandedId === inv.id;
+            const isSqlVisible = showSqlForId === inv.id;
             const leadIdInEvidence = inv.evidence?.lead_id || inv.evidence?.canonical_lead_id;
 
             return (
-              <div key={inv.id} className="card" style={{ padding: "16px 20px" }}>
+              <div key={inv.id} className="card" style={{ padding: "18px 20px" }}>
                 {/* 1. Header: ID, Title, Severity, Category, Action */}
                 <div
                   style={{
@@ -177,7 +181,7 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                     justifyContent: "space-between",
                     alignItems: "flex-start",
                     gap: "12px",
-                    marginBottom: "10px",
+                    marginBottom: "12px",
                     flexWrap: "wrap",
                   }}
                 >
@@ -191,8 +195,8 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                         {getSeverityBadge(inv.severity)}
                         <span className="badge badge-neutral">{inv.category}</span>
                       </div>
-                      <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
-                        Governance Rule: <code style={{ color: "var(--primary)", fontWeight: 500 }}>{inv.rule_name}</code>
+                      <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "3px" }}>
+                        Enforced Policy: <strong style={{ color: "var(--text-main)" }}>{inv.rule_name}</strong>
                       </div>
                     </div>
                   </div>
@@ -201,26 +205,27 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                     <button
                       className="btn btn-secondary btn-sm"
                       onClick={() => onSelectLead(leadIdInEvidence)}
-                      title={`Inspect affected lead record ${leadIdInEvidence}`}
+                      title={`Review lead profile for ${leadIdInEvidence}`}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
                     >
-                      <span>Inspect {leadIdInEvidence}</span>
-                      <ArrowRight size={12} />
+                      <span>Review Lead Profile</span>
+                      <ArrowRight size={13} />
                     </button>
                   )}
                 </div>
 
-                {/* 2. Detection Explanation */}
-                <p style={{ fontSize: "13px", color: "var(--text-main)", lineHeight: 1.5, margin: "0 0 12px 0" }}>
+                {/* 2. Business Description */}
+                <p style={{ fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.5, margin: "0 0 14px 0" }}>
                   {inv.description}
                 </p>
 
-                {/* 3. Operational Next Step Callout */}
+                {/* 3. Action Callout & Quick Controls */}
                 <div
                   style={{
                     backgroundColor: "#f8fafc",
                     border: "1px solid var(--border-subtle)",
                     borderRadius: "6px",
-                    padding: "10px 14px",
+                    padding: "12px 14px",
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
@@ -228,9 +233,9 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                     flexWrap: "wrap",
                   }}
                 >
-                  <div style={{ fontSize: "13px", lineHeight: 1.45, flex: 1, minWidth: "240px" }}>
+                  <div style={{ fontSize: "13px", lineHeight: 1.45, flex: 1, minWidth: "260px" }}>
                     <span style={{ fontWeight: 600, color: "var(--text-main)", fontSize: "12px", marginRight: "6px" }}>
-                      Recommended Action:
+                      Remediation Plan:
                     </span>
                     <span style={{ color: "var(--text-secondary)" }}>{inv.recommended_action}</span>
                   </div>
@@ -241,14 +246,14 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                     style={{ flexShrink: 0, fontSize: "12px", color: "var(--primary)" }}
                   >
                     {isExpanded ? (
-                      <>Hide Details <ChevronUp size={13} /></>
+                      <>Hide Audit Context <ChevronUp size={13} /></>
                     ) : (
-                      <>View Technical Evidence & SQL <ChevronDown size={13} /></>
+                      <>Inspect Audit Context <ChevronDown size={13} /></>
                     )}
                   </button>
                 </div>
 
-                {/* 4. Progressive Disclosure: Technical Evidence & SQL */}
+                {/* 4. Progressive Disclosure: Context & Verification Query */}
                 {isExpanded && (
                   <div
                     style={{
@@ -260,15 +265,15 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                       gap: "12px",
                     }}
                   >
-                    {/* Structured Evidence Key-Value Grid */}
+                    {/* Key Attributes */}
                     <div>
                       <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "8px" }}>
-                        Recorded Forensic Evidence:
+                        Captured Audit Attributes:
                       </div>
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
                           gap: "8px",
                           backgroundColor: "#ffffff",
                           border: "1px solid var(--border-subtle)",
@@ -289,32 +294,43 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                       </div>
                     </div>
 
-                    {/* SQL Verification Query Box */}
+                    {/* Technical Diagnostic Query (Collapsed by Default) */}
                     <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                        <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)" }}>
-                          Verification SQL Query:
-                        </span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <button
                           className="btn btn-ghost btn-sm"
-                          onClick={() => handleCopyQuery(inv.id, inv.detection_query)}
-                          style={{ fontSize: "11px", padding: "0 6px" }}
+                          onClick={() => setShowSqlForId((prev) => (prev === inv.id ? null : inv.id))}
+                          style={{ padding: "0", fontSize: "12px", color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: "4px" }}
                         >
-                          {copiedId === inv.id ? (
-                            <>
-                              <Check size={12} color="var(--success)" /> Copied
-                            </>
-                          ) : (
-                            <>
-                              <Copy size={12} /> Copy SQL
-                            </>
-                          )}
+                          <Code size={13} />
+                          <span>{isSqlVisible ? "Hide Diagnostic Query" : "Show Diagnostic Query (Technical)"}</span>
+                          {isSqlVisible ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                         </button>
+
+                        {isSqlVisible && (
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => handleCopyQuery(inv.id, inv.detection_query)}
+                            style={{ fontSize: "11px", padding: "0 6px" }}
+                          >
+                            {copiedId === inv.id ? (
+                              <>
+                                <Check size={12} color="var(--success)" /> Copied
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={12} /> Copy Query
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
 
-                      <pre className="code-box" style={{ margin: 0, fontSize: "12px" }}>
-                        <code>{inv.detection_query}</code>
-                      </pre>
+                      {isSqlVisible && (
+                        <pre className="code-box" style={{ margin: "8px 0 0 0", fontSize: "12px" }}>
+                          <code>{inv.detection_query}</code>
+                        </pre>
+                      )}
                     </div>
                   </div>
                 )}

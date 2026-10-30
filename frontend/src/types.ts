@@ -12,6 +12,7 @@ export interface DashboardSummary {
   score_bands: Record<string, number>;
   task_status_distribution: Record<string, number>;
   opportunity_stages: Record<string, number>;
+  duplicate_opportunities_count?: number;
   audit_decisions: Record<string, number>;
   anomalies_detected: number;
   clean_baseline_verified: boolean;
