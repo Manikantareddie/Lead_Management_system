@@ -36,6 +36,15 @@ WON_LOST_REASONS_LOST = [
     "no_decision",
 ]
 
+# Buying decisions a representative records at the end of the sales workflow.
+# Bought and Lost close the deal; Decision Pending keeps the opportunity open
+# (and requires a scheduled follow-up) because the customer has not decided yet.
+BUYING_DECISION_STAGE = {
+    "bought": "closed_won",
+    "decision_pending": "decision_pending",
+    "lost": "closed_lost",
+}
+
 
 def is_valid_stage_transition(from_stage: str | None, to_stage: str) -> bool:
     """Return True if the stage transition is valid under the lifecycle model."""

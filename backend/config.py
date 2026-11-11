@@ -33,3 +33,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data" / "generated_full")))
 GROUND_TRUTH_DIR = Path(os.getenv("GROUND_TRUTH_DIR", str(BASE_DIR / "data" / "ground_truth")))
 SQL_DIR = Path(os.getenv("SQL_DIR", str(BASE_DIR / "sql")))
+
+# Authentication configuration
+# AUTH_SECRET must be set to a strong random value in any real deployment.
+AUTH_SECRET = os.getenv("AUTH_SECRET", "yottaflex-dev-secret-change-me")
+AUTH_TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", str(8 * 3600)))
+
+# Additional front-end origins allowed by CORS (comma-separated), merged with defaults.
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "")

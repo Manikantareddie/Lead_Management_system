@@ -1,21 +1,57 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../services/api";
-import type { LeadItem, PaginatedResponse } from "../types";
+import { useData } from "../context/DataContext";
+import type { LeadItem, PaginatedResponse, SalesRep } from "../types";
 import {
   Search,
   X,
   ChevronLeft,
   ChevronRight,
-  ArrowUpRight,
+  Plus,
+  AlertCircle,
 } from "lucide-react";
 
 interface LeadsViewProps {
   onSelectLead: (leadId: string) => void;
   initialStage?: string;
   initialScoreBand?: string;
+  onDataChanged?: () => void;
+  /** Page heading. Defaults to "Leads". */
+  title?: string;
+  /** When set, the list is locked to this representative (used by "My Leads"). */
+  ownerScope?: string;
 }
 
-export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage, initialScoreBand }) => {
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function formatShortDate(value?: string | null): string {
+  const raw = (value || "").slice(0, 10);
+  const parts = raw.split("-");
+  if (parts.length !== 3) return "";
+  const monthIndex = parseInt(parts[1], 10) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return raw;
+  return `${parseInt(parts[2], 10)} ${MONTHS[monthIndex]}`;
+}
+
+function isOverdue(value?: string | null): boolean {
+  const raw = (value || "").slice(0, 10);
+  if (!raw) return false;
+  return raw < new Date().toISOString().slice(0, 10);
+}
+
+function isDuplicateLead(lead: LeadItem): boolean {
+  return lead.is_duplicate === true || String(lead.is_duplicate).toLowerCase() === "true";
+}
+
+export const LeadsView: React.FC<LeadsViewProps> = ({
+  onSelectLead,
+  initialStage,
+  initialScoreBand,
+  onDataChanged,
+  title = "Leads",
+  ownerScope,
+}) => {
+  const { version } = useData();
   const [data, setData] = useState<PaginatedResponse<LeadItem> | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -26,11 +62,12 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [stage, setStage] = useState(initialStage || "");
-  const [territory, setTerritory] = useState("");
+  const [owner, setOwner] = useState(ownerScope || "");
   const [scoreBand, setScoreBand] = useState(initialScoreBand || "");
-  const [sortBy, setSortBy] = useState("created_at");
-  const [sortOrder, setSortOrder] = useState("desc");
-  const [isDuplicate, setIsDuplicate] = useState<boolean | undefined>(undefined);
+
+  // Owner filter options
+  const [reps, setReps] = useState<SalesRep[]>([]);
+  const [showAddLead, setShowAddLead] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -40,8 +77,39 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
   }, [search]);
 
   useEffect(() => {
+    let active = true;
+    api
+      .getSalesreps()
+      .then((res) => {
+        if (active) setReps(res);
+      })
+      .catch(() => {
+        /* owner filter degrades gracefully if the list is unavailable */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Apply drill-down filters coming from other views (e.g. dashboard cards).
+  useEffect(() => {
+    setStage(initialStage || "");
+    setScoreBand(initialScoreBand || "");
+    setPage(1);
+  }, [initialStage, initialScoreBand]);
+
+  // Lock the list to a single representative when scoped (the "My Leads" section).
+  useEffect(() => {
+    if (ownerScope) {
+      setOwner(ownerScope);
+      setPage(1);
+    }
+  }, [ownerScope]);
+
+  useEffect(() => {
     loadLeads();
-  }, [page, pageSize, stage, territory, scoreBand, sortBy, sortOrder, isDuplicate, debouncedSearch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageSize, stage, owner, scoreBand, debouncedSearch, version]);
 
   const loadLeads = async () => {
     try {
@@ -52,11 +120,10 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
         page_size: pageSize,
         search: debouncedSearch.trim() || undefined,
         stage: stage || undefined,
-        territory: territory || undefined,
         score_band: scoreBand || undefined,
-        sort_by: sortBy,
-        sort_order: sortOrder,
-        is_duplicate: isDuplicate,
+        assigned_salesrep_id: owner || undefined,
+        sort_by: "created_at",
+        sort_order: "desc",
       });
       setData(res);
     } catch (err: any) {
@@ -66,17 +133,21 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
     }
   };
 
-  const hasFilters = Boolean(search || stage || territory || scoreBand || isDuplicate !== undefined || sortBy !== "created_at");
+  const hasFilters = Boolean(search || stage || scoreBand || (!ownerScope && owner));
 
   const clearFilters = () => {
     setSearch("");
     setStage("");
-    setTerritory("");
+    setOwner(ownerScope || "");
     setScoreBand("");
-    setIsDuplicate(undefined);
-    setSortBy("created_at");
-    setSortOrder("desc");
     setPage(1);
+  };
+
+  const handleLeadCreated = () => {
+    setShowAddLead(false);
+    setPage(1);
+    loadLeads();
+    onDataChanged?.();
   };
 
   const getStageBadge = (st: string) => {
@@ -105,19 +176,43 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
 
   return (
     <div className="view-container">
-      {/* Compact Filter Toolbar */}
+      {/* Page header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "12px",
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <h1 style={{ margin: 0, fontSize: "20px", fontWeight: 700, color: "var(--text-main)" }}>{title}</h1>
+          <p style={{ margin: "2px 0 0 0", fontSize: "13px", color: "var(--text-muted)" }}>
+            {data ? (
+              <>
+                Showing <strong style={{ color: "var(--text-main)" }}>{data.items.length}</strong> of{" "}
+                <strong style={{ color: "var(--text-main)" }}>{data.total.toLocaleString()}</strong> leads
+              </>
+            ) : (
+              "Loading leads..."
+            )}
+          </p>
+        </div>
+        <button className="btn btn-primary" onClick={() => setShowAddLead(true)}>
+          <Plus size={15} />
+          <span>Add Lead</span>
+        </button>
+      </div>
+
+      {/* Filter Toolbar */}
       <div className="toolbar">
         <div className="toolbar-filters">
-          {/* Search */}
           <div style={{ position: "relative", display: "inline-block" }}>
-            <Search
-              size={14}
-              color="var(--text-muted)"
-              style={{ position: "absolute", left: "10px", top: "10px" }}
-            />
+            <Search size={14} color="var(--text-muted)" style={{ position: "absolute", left: "10px", top: "10px" }} />
             <input
               type="text"
-              placeholder="Search by ID, company, or email..."
+              placeholder="Search by name, company, or email..."
               className="input-search"
               value={search}
               onChange={(e) => {
@@ -127,7 +222,6 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
             />
           </div>
 
-          {/* Stage */}
           <select
             className="select-compact"
             value={stage}
@@ -135,8 +229,9 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
               setStage(e.target.value);
               setPage(1);
             }}
+            title="Filter by status"
           >
-            <option value="">All Stages</option>
+            <option value="">All statuses</option>
             <option value="New">New</option>
             <option value="Contacted">Contacted</option>
             <option value="Qualified">Qualified</option>
@@ -144,103 +239,52 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
             <option value="Disqualified">Disqualified</option>
           </select>
 
-          {/* Score Band */}
-          <select
-            className="select-compact"
-            value={scoreBand}
-            onChange={(e) => {
-              setScoreBand(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All Scores</option>
-            <option value="85-100">85-100 (Exceptional)</option>
-            <option value="70-84">70-84 (High)</option>
-            <option value="40-69">40-69 (Medium)</option>
-            <option value="0-39">0-39 (Low)</option>
-          </select>
-
-          {/* Territory */}
-          <select
-            className="select-compact"
-            value={territory}
-            onChange={(e) => {
-              setTerritory(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All Territories</option>
-            <option value="North">North</option>
-            <option value="South">South</option>
-            <option value="East">East</option>
-            <option value="West">West</option>
-            <option value="Central">Central</option>
-          </select>
-
-          {/* Duplicate filter */}
-          <select
-            className="select-compact"
-            value={isDuplicate === undefined ? "" : isDuplicate ? "true" : "false"}
-            onChange={(e) => {
-              if (e.target.value === "") setIsDuplicate(undefined);
-              else setIsDuplicate(e.target.value === "true");
-              setPage(1);
-            }}
-          >
-            <option value="">All Records</option>
-            <option value="false">Canonical Only</option>
-            <option value="true">Duplicates Only</option>
-          </select>
-
-          {/* Sort order */}
-          <select
-            className="select-compact"
-            value={`${sortBy}-${sortOrder}`}
-            onChange={(e) => {
-              const [sb, so] = e.target.value.split("-");
-              setSortBy(sb);
-              setSortOrder(so);
-              setPage(1);
-            }}
-          >
-            <option value="created_at-desc">Newest First</option>
-            <option value="created_at-asc">Oldest First</option>
-            <option value="lead_score-desc">Highest Score</option>
-            <option value="lead_score-asc">Lowest Score</option>
-          </select>
+          {ownerScope ? (
+            <span
+              className="badge badge-primary"
+              style={{ fontSize: "11px", padding: "3px 8px" }}
+              title="This list shows only leads assigned to you"
+            >
+              Showing your leads
+            </span>
+          ) : (
+            <select
+              className="select-compact"
+              value={owner}
+              onChange={(e) => {
+                setOwner(e.target.value);
+                setPage(1);
+              }}
+              title="Filter by assigned representative"
+            >
+              <option value="">All representatives</option>
+              {reps.map((rep) => (
+                <option key={rep.salesrep_id} value={rep.salesrep_id}>
+                  {rep.name}
+                </option>
+              ))}
+            </select>
+          )}
 
           {hasFilters && (
             <button className="btn btn-ghost btn-sm" onClick={clearFilters}>
-              <X size={13} /> Reset filters
+              <X size={13} /> Clear
             </button>
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", color: "var(--text-muted)" }}>
-          <span>
-            {data ? (
-              <span>
-                Showing <strong style={{ color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>{data.items.length}</strong> of{" "}
-                <span style={{ fontVariantNumeric: "tabular-nums" }}>{data.total.toLocaleString()}</span> leads
-              </span>
-            ) : (
-              "Loading..."
-            )}
-          </span>
-          <select
-            className="select-compact"
-            style={{ height: "28px", padding: "0 6px" }}
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setPage(1);
-            }}
-          >
-            <option value="25">25 / page</option>
-            <option value="50">50 / page</option>
-            <option value="100">100 / page</option>
-          </select>
-        </div>
+        <select
+          className="select-compact"
+          value={pageSize}
+          onChange={(e) => {
+            setPageSize(Number(e.target.value));
+            setPage(1);
+          }}
+        >
+          <option value="25">25 / page</option>
+          <option value="50">50 / page</option>
+          <option value="100">100 / page</option>
+        </select>
       </div>
 
       {error && (
@@ -254,89 +298,93 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
         <table className="data-table">
           <thead>
             <tr>
-              <th style={{ width: "155px" }}>Lead ID</th>
-              <th style={{ width: "175px" }}>Company</th>
-              <th style={{ width: "220px" }}>Contact</th>
-              <th style={{ width: "100px" }}>Territory</th>
-              <th style={{ width: "110px" }}>Stage</th>
-              <th style={{ width: "85px", textAlign: "center" }}>Score</th>
-              <th style={{ width: "145px" }}>Assigned Rep</th>
-              <th style={{ width: "105px" }}>Created</th>
-              <th style={{ width: "85px", textAlign: "right" }}>Action</th>
+              <th style={{ width: "230px" }}>Lead</th>
+              <th style={{ width: "190px" }}>Company</th>
+              <th style={{ width: "90px", textAlign: "center" }}>Score</th>
+              <th style={{ width: "120px" }}>Status</th>
+              <th style={{ width: "170px" }}>Owner</th>
+              <th>Next action</th>
+              <th style={{ width: "40px" }} />
             </tr>
           </thead>
           <tbody>
             {loading && !data ? (
               <tr>
-                <td colSpan={9} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                <td colSpan={7} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
                   Loading leads...
                 </td>
               </tr>
             ) : data && data.items.length === 0 ? (
               <tr>
-                <td colSpan={9} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                <td colSpan={7} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
                   No leads found matching current criteria. Try adjusting your search or filters.
                 </td>
               </tr>
             ) : (
               data?.items.map((lead) => (
-                <tr key={lead.lead_id}>
+                <tr
+                  key={lead.lead_id}
+                  onClick={() => onSelectLead(lead.lead_id)}
+                  style={{ cursor: "pointer" }}
+                  title="Open lead details"
+                >
                   <td>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                      <span className="id-tag" title={lead.lead_id}>{lead.lead_id}</span>
-                      {lead.is_duplicate && (
-                        <span className="badge badge-warning" style={{ fontSize: "10px", padding: "1px 4px" }}>
-                          Dup
-                        </span>
+                    <div style={{ lineHeight: 1.35 }}>
+                      <div style={{ fontWeight: 600, color: "var(--text-main)" }}>
+                        {lead.contact_name?.trim() || "Unnamed contact"}
+                        {isDuplicateLead(lead) && (
+                          <span className="badge badge-warning" style={{ fontSize: "10px", padding: "1px 4px", marginLeft: "6px" }}>
+                            Possible duplicate
+                          </span>
+                        )}
+                      </div>
+                      {lead.contact_email && (
+                        <div className="text-truncate" style={{ fontSize: "12px", color: "var(--text-muted)" }} title={lead.contact_email}>
+                          {lead.contact_email}
+                        </div>
                       )}
                     </div>
                   </td>
                   <td>
-                    <span style={{ fontWeight: 500, color: "var(--text-main)" }}>
-                      {lead.company_name || "—"}
-                    </span>
+                    <span style={{ fontWeight: 500, color: "var(--text-main)" }}>{lead.company_name || "—"}</span>
                   </td>
-                  <td>
-                    <div style={{ lineHeight: 1.35 }}>
-                      <div style={{ fontWeight: 500, color: "var(--text-main)" }}>
-                        {lead.contact_name || "—"}
-                      </div>
-                      <div
-                        className="text-truncate"
-                        style={{ fontSize: "12px", color: "var(--text-muted)" }}
-                        title={lead.contact_email}
-                      >
-                        {lead.contact_email}
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <span style={{ color: "var(--text-secondary)" }}>{lead.territory}</span>
-                  </td>
+                  <td style={{ textAlign: "center" }}>{getScoreBadge(Number(lead.lead_score))}</td>
                   <td>{getStageBadge(lead.status)}</td>
-                  <td style={{ textAlign: "center" }}>
-                    {getScoreBadge(Number(lead.lead_score))}
-                  </td>
                   <td>
-                    <span style={{ color: lead.assigned_salesrep_name === "Unassigned" ? "var(--warning-text)" : "var(--text-secondary)" }}>
-                      {lead.assigned_salesrep_name}
+                    <span
+                      style={{
+                        color: !lead.assigned_salesrep_name || lead.assigned_salesrep_name === "Unassigned"
+                          ? "var(--warning-text)"
+                          : "var(--text-secondary)",
+                      }}
+                    >
+                      {lead.assigned_salesrep_name || "Unassigned"}
                     </span>
                   </td>
                   <td>
-                    <span style={{ fontSize: "12px", color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}>
-                      {lead.created_at.slice(0, 10)}
-                    </span>
+                    {lead.next_action ? (
+                      <div style={{ lineHeight: 1.35 }}>
+                        <div className="text-truncate" style={{ fontWeight: 500, color: "var(--text-main)" }} title={lead.next_action}>
+                          {lead.next_action}
+                        </div>
+                        {lead.next_action_due && (
+                          <div
+                            style={{
+                              fontSize: "12px",
+                              color: isOverdue(lead.next_action_due) ? "var(--danger)" : "var(--text-muted)",
+                            }}
+                          >
+                            {isOverdue(lead.next_action_due) ? "Overdue · " : "Due "}
+                            {formatShortDate(lead.next_action_due)}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>No next step</span>
+                    )}
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => onSelectLead(lead.lead_id)}
-                      title={`Inspect lead ${lead.lead_id}`}
-                      style={{ padding: "0 8px" }}
-                    >
-                      <span>View</span>
-                      <ArrowUpRight size={12} />
-                    </button>
+                    <ChevronRight size={15} color="var(--text-light)" />
                   </td>
                 </tr>
               ))
@@ -370,6 +418,171 @@ export const LeadsView: React.FC<LeadsViewProps> = ({ onSelectLead, initialStage
             </div>
           </div>
         )}
+      </div>
+
+      {showAddLead && (
+        <AddLeadModal reps={reps} onClose={() => setShowAddLead(false)} onCreated={handleLeadCreated} />
+      )}
+    </div>
+  );
+};
+
+interface AddLeadModalProps {
+  reps: SalesRep[];
+  onClose: () => void;
+  onCreated: () => void;
+}
+
+const AddLeadModal: React.FC<AddLeadModalProps> = ({ reps, onClose, onCreated }) => {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [productInterest, setProductInterest] = useState("SMB");
+  const [territory, setTerritory] = useState("North");
+  const [owner, setOwner] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyName.trim()) {
+      setFormError("Please enter the company name.");
+      return;
+    }
+    if (!firstName.trim()) {
+      setFormError("Please enter the contact's first name.");
+      return;
+    }
+    try {
+      setSaving(true);
+      setFormError(null);
+      await api.createLead({
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        email: email.trim(),
+        company_name: companyName.trim(),
+        product_interest: productInterest,
+        territory,
+        assigned_salesrep_id: owner || undefined,
+      });
+      onCreated();
+    } catch (err: any) {
+      setFormError(err.message || "Unable to create the lead. Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose} role="presentation">
+      <div className="modal-panel" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Add lead">
+        <div className="modal-header">
+          <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 700, color: "var(--text-main)" }}>Add a lead</h2>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close">
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={submit}>
+          <div className="modal-body">
+            <div className="form-field">
+              <label className="form-label" htmlFor="lead-company">Company name</label>
+              <input
+                id="lead-company"
+                className="form-input"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                placeholder="e.g. Acme Corp"
+                autoFocus
+              />
+            </div>
+
+            <div className="form-grid-2">
+              <div className="form-field">
+                <label className="form-label" htmlFor="lead-first">First name</label>
+                <input
+                  id="lead-first"
+                  className="form-input"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="e.g. Jordan"
+                />
+              </div>
+              <div className="form-field">
+                <label className="form-label" htmlFor="lead-last">Last name</label>
+                <input
+                  id="lead-last"
+                  className="form-input"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="e.g. Patel"
+                />
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label className="form-label" htmlFor="lead-email">Email</label>
+              <input
+                id="lead-email"
+                type="email"
+                className="form-input"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="e.g. jordan.patel@acme.com"
+              />
+            </div>
+
+            <div className="form-grid-2">
+              <div className="form-field">
+                <label className="form-label" htmlFor="lead-product">Product interest</label>
+                <select id="lead-product" className="form-input" value={productInterest} onChange={(e) => setProductInterest(e.target.value)}>
+                  <option value="Enterprise">Enterprise</option>
+                  <option value="Mid-Market">Mid-Market</option>
+                  <option value="SMB">SMB</option>
+                </select>
+              </div>
+              <div className="form-field">
+                <label className="form-label" htmlFor="lead-territory">Territory</label>
+                <select id="lead-territory" className="form-input" value={territory} onChange={(e) => setTerritory(e.target.value)}>
+                  <option value="North">North</option>
+                  <option value="South">South</option>
+                  <option value="East">East</option>
+                  <option value="West">West</option>
+                  <option value="Central">Central</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-field">
+              <label className="form-label" htmlFor="lead-owner">Assign to</label>
+              <select id="lead-owner" className="form-input" value={owner} onChange={(e) => setOwner(e.target.value)}>
+                <option value="">Unassigned</option>
+                {reps.map((rep) => (
+                  <option key={rep.salesrep_id} value={rep.salesrep_id}>
+                    {rep.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {formError && (
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", color: "var(--danger)" }}>
+                <AlertCircle size={14} />
+                <span>{formError}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="modal-footer">
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? "Adding..." : "Add lead"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

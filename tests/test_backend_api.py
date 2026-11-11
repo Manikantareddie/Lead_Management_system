@@ -7,7 +7,10 @@ import pytest
 from fastapi.testclient import TestClient
 from backend.main import app
 
-client = TestClient(app)
+from conftest import authenticated_client
+
+# Authenticated client (auth is enforced on all /api/* routes).
+client = authenticated_client()
 
 
 def test_backend_health():
@@ -143,3 +146,74 @@ def test_task_create_and_update_mutation():
     updated_data = patch_resp.json()
     assert updated_data["status"] == "completed"
     assert updated_data["completed_at"] is not None
+
+
+def test_activity_create_does_not_change_stage():
+    """Recording an activity must log history without advancing the lead's sales stage (requirement D)."""
+    before = client.get("/api/leads/LEAD-2026-000001").json()
+    stage_before = before["lead"]["status"]
+    activity_count_before = len(before["activities"])
+
+    payload = {
+        "lead_id": "LEAD-2026-000001",
+        "type": "call",
+        "subject": "Discovery call logged from console",
+        "description": "Activity recorded from the lead workspace",
+        "outcome": "connected",
+    }
+    create_resp = client.post("/api/activities", json=payload)
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    assert created["lead_id"] == "LEAD-2026-000001"
+    assert created["subject"] == "Discovery call logged from console"
+    assert created["activity_id"].startswith("ACT-LEAD-2026-000001-")
+
+    after = client.get("/api/leads/LEAD-2026-000001").json()
+    assert after["lead"]["status"] == stage_before
+    assert len(after["activities"]) == activity_count_before + 1
+
+
+def test_buying_decision_bought_lost_and_pending():
+    """Buying decisions resolve to closed outcomes, except Decision Pending which stays active."""
+    opp = client.get("/api/opportunities?page=1&page_size=1").json()["items"][0]
+    opp_id = opp["opportunity_id"]
+    lead_id = opp["lead_id"]
+
+    # Only the three agreed outcomes are accepted.
+    invalid = client.post(f"/api/opportunities/{opp_id}/decision", json={"decision": "maybe"})
+    assert invalid.status_code == 400
+
+    # Decision Pending must not be recorded without a scheduled follow-up.
+    missing_follow_up = client.post(f"/api/opportunities/{opp_id}/decision", json={"decision": "decision_pending"})
+    assert missing_follow_up.status_code == 400
+
+    # Decision Pending keeps the deal active and schedules the next follow-up.
+    pending = client.post(
+        f"/api/opportunities/{opp_id}/decision",
+        json={
+            "decision": "decision_pending",
+            "next_follow_up_title": "Call back about the pending decision",
+            "next_follow_up_due_date": "2026-11-10",
+        },
+    )
+    assert pending.status_code == 200
+    pending_body = pending.json()
+    assert pending_body["opportunity"]["stage"] == "decision_pending"
+    assert pending_body["opportunity"]["closed_at"] is None
+    assert pending_body["task"]["lead_id"] == lead_id
+
+    # Bought closes the deal as won.
+    bought = client.post(f"/api/opportunities/{opp_id}/decision", json={"decision": "bought"})
+    assert bought.status_code == 200
+    assert bought.json()["opportunity"]["stage"] == "closed_won"
+    assert bought.json()["opportunity"]["closed_at"] is not None
+
+    # Lost closes the deal as lost.
+    lost = client.post(f"/api/opportunities/{opp_id}/decision", json={"decision": "lost"})
+    assert lost.status_code == 200
+    assert lost.json()["opportunity"]["stage"] == "closed_lost"
+
+
+def test_buying_decision_unknown_opportunity():
+    resp = client.post("/api/opportunities/OPP-DOES-NOT-EXIST/decision", json={"decision": "bought"})
+    assert resp.status_code == 404

@@ -1,3 +1,16 @@
+export interface NextAction {
+  task_id: string;
+  title: string;
+  type: string;
+  priority: string;
+  status: string;
+  due_date: string;
+  lead_id: string;
+  lead_name: string;
+  company_name: string;
+  overdue: boolean;
+}
+
 export interface DashboardSummary {
   total_leads: number;
   total_companies: number;
@@ -6,6 +19,9 @@ export interface DashboardSummary {
   total_tasks: number;
   total_opportunities: number;
   total_pipeline_value: number;
+  closed_won_value: number;
+  won_opportunities: number;
+  lost_opportunities: number;
   average_lead_score: number;
   stage_distribution: Record<string, number>;
   territory_distribution: Record<string, number>;
@@ -15,7 +31,33 @@ export interface DashboardSummary {
   duplicate_opportunities_count?: number;
   audit_decisions: Record<string, number>;
   anomalies_detected: number;
-  clean_baseline_verified: boolean;
+  new_leads: number;
+  qualified_leads: number;
+  open_opportunities: number;
+  follow_ups_due: number;
+  tasks_overdue: number;
+  tasks_due_today: number;
+  next_actions: NextAction[];
+}
+
+export interface HealthStatus {
+  status: string;
+  mode: string;
+  record_counts: Record<string, number>;
+}
+
+export interface AuthUser {
+  username: string;
+  display_name: string;
+  role: "admin" | "manager" | "sales_rep";
+  salesrep_id: string | null;
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_at: string;
+  user: AuthUser;
 }
 
 export interface LeadItem {
@@ -45,6 +87,17 @@ export interface LeadItem {
   contact_name: string;
   contact_email: string;
   assigned_salesrep_name: string;
+  next_action?: string | null;
+  next_action_due?: string | null;
+}
+
+export interface SalesRep {
+  salesrep_id: string;
+  name: string;
+  email?: string | null;
+  territory?: string | null;
+  product_specialty?: string | null;
+  is_active?: boolean | string;
 }
 
 export interface PaginatedResponse<T> {
@@ -141,6 +194,14 @@ export interface LeadDetails {
     intent_score: number;
     engagement_score: number;
     lead_score: number;
+    band?: string;
+    summary?: string;
+    factors?: Array<{
+      key: string;
+      label: string;
+      score: number;
+      text: string;
+    }>;
     formula: string;
     frozen: boolean;
   };
@@ -156,6 +217,9 @@ export interface TaskItem {
   lead_id: string;
   assigned_to: string;
   assigned_salesrep_name: string;
+  lead_name?: string;
+  company_name?: string;
+  overdue?: boolean;
   type: string;
   title: string;
   description: string;
@@ -170,6 +234,8 @@ export interface OpportunityItem {
   lead_id: string;
   salesrep_id: string;
   salesrep_name: string;
+  lead_name?: string;
+  company_name?: string;
   stage: string;
   amount: number | string;
   currency: string;
@@ -179,6 +245,13 @@ export interface OpportunityItem {
   is_duplicate: boolean | string;
   duplicate_of_opportunity_id?: string;
   created_at: string;
+}
+
+export interface PipelineStageStat {
+  stage: string;
+  count: number;
+  total_value: number;
+  avg_value: number;
 }
 
 export interface InvestigationItem {

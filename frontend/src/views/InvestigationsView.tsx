@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../services/api";
+import { useData } from "../context/DataContext";
 import type { InvestigationItem } from "../types";
 import {
   ShieldAlert,
@@ -21,6 +22,7 @@ interface InvestigationsViewProps {
 }
 
 export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelectLead }) => {
+  const { version } = useData();
   const [investigations, setInvestigations] = useState<InvestigationItem[]>([]);
   const [selectedSeverity, setSelectedSeverity] = useState<string>("");
   const [selectedCategory, setSelectedCategory] = useState<string>("");
@@ -45,7 +47,8 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
 
   useEffect(() => {
     loadInvestigations();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version]);
 
   const toggleExpand = (id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -186,7 +189,6 @@ export const InvestigationsView: React.FC<InvestigationsViewProps> = ({ onSelect
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "flex-start", gap: "10px" }}>
-                    <span className="id-tag">{inv.id}</span>
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                         <h2 style={{ fontSize: "15px", fontWeight: 600, color: "var(--text-main)", margin: 0 }}>

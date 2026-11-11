@@ -1,0 +1,4 @@
+score_rule_id,name,component,weight,version,effective_from,effective_to,min_score,max_score,description,is_active,created_at,updated_at
+SCR-000001,Fit Scoring Rule v1,fit,0.5,1,2026-01-01T00:00:00Z,,0,100,fit component scoring rule,True,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z
+SCR-000002,Intent Scoring Rule v1,intent,0.3,1,2026-01-01T00:00:00Z,,0,100,intent component scoring rule,True,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z
+SCR-000003,Engagement Scoring Rule v1,engagement,0.2,1,2026-01-01T00:00:00Z,,0,100,engagement component scoring rule,True,2026-01-01T00:00:00Z,2026-01-01T00:00:00Z

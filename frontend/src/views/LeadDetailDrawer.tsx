@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../services/api";
+import { useData } from "../context/DataContext";
 import type { LeadDetails } from "../types";
 import {
   X,
@@ -17,7 +18,8 @@ import {
   DollarSign,
   Clock,
   Briefcase,
-  ArrowRight,
+  RotateCcw,
+  CalendarClock,
 } from "lucide-react";
 
 interface LeadDetailDrawerProps {
@@ -27,113 +29,141 @@ interface LeadDetailDrawerProps {
 }
 
 export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onClose, onLeadUpdated }) => {
+  const { version } = useData();
   const [details, setDetails] = useState<LeadDetails | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "opportunities" | "activities" | "routing" | "consent" | "history" | "audit"
-  >("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "activities" | "details">("overview");
 
-  // Task creation state
-  const [showCreateTask, setShowCreateTask] = useState(false);
+  // Follow-up creation state (lives inside the "Update progress" panel)
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskType, setNewTaskType] = useState("email");
   const [newTaskPriority, setNewTaskPriority] = useState("medium");
   const [newTaskDueDate, setNewTaskDueDate] = useState("");
   const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [taskMsg, setTaskMsg] = useState<string | null>(null);
+  const [followUpMsg, setFollowUpMsg] = useState<string | null>(null);
 
-  // Stage transition state
-  const [transitioning, setTransitioning] = useState(false);
-  const [transitionMsg, setTransitionMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // The single primary action on this lead: "Update progress".
+  const [showProgress, setShowProgress] = useState(false);
+
+  // What happened (activity) state — lives inside the "Update progress" panel.
+  const [activityType, setActivityType] = useState("call");
+  const [activitySubject, setActivitySubject] = useState("");
+  const [activityOutcome, setActivityOutcome] = useState("");
+
+  // Buying decision state — recorded against the lead's deal.
+  const [dealId, setDealId] = useState("");
+  const [decision, setDecision] = useState<"" | "bought" | "decision_pending" | "lost">("");
+  const [decisionReason, setDecisionReason] = useState("");
+
+  // Deals on this lead; a buying decision is recorded against the selected one.
+  const deals = details?.opportunities || [];
+  const selectedDeal = deals.find((d) => d.opportunity_id === dealId) || deals[0] || null;
 
   const handleUpdateTaskStatus = async (taskId: string, newStatus: string) => {
     try {
       await api.updateTask(taskId, { status: newStatus });
-      setTaskMsg("Task status updated successfully.");
-      setTimeout(() => setTaskMsg(null), 3000);
-      if (leadId) loadLead(leadId);
-    } catch (e: any) {
-      setTaskMsg("Failed to update task: " + e.message);
-      setTimeout(() => setTaskMsg(null), 4000);
+      setFollowUpMsg("Follow-up updated.");
+      setTimeout(() => setFollowUpMsg(null), 3000);
+      onLeadUpdated?.();
+    } catch {
+      setFollowUpMsg("Could not update the follow-up. Please try again.");
+      setTimeout(() => setFollowUpMsg(null), 4000);
     }
   };
 
-  const handleCreateTask = async (e: React.FormEvent) => {
+  const handleSaveProgress = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!leadId || !newTaskTitle.trim()) return;
+    if (!leadId) return;
+
+    const hasActivity = activitySubject.trim().length > 0;
+    const hasFollowUp = newTaskTitle.trim().length > 0;
+    const hasDecision = decision !== "";
+
+    if (!hasActivity && !hasFollowUp && !hasDecision) {
+      setTaskMsg("Add what happened, a follow-up, or a buying decision.");
+      setTimeout(() => setTaskMsg(null), 4000);
+      return;
+    }
+    if (decision === "decision_pending" && !hasFollowUp) {
+      setTaskMsg("A deal awaiting the customer's decision needs a follow-up.");
+      setTimeout(() => setTaskMsg(null), 4000);
+      return;
+    }
+    // The decision endpoint schedules the follow-up itself for decision-pending deals.
+    const decisionSchedulesFollowUp = decision === "decision_pending" && hasFollowUp;
+
     setTaskSubmitting(true);
     setTaskMsg(null);
     try {
-      await api.createTask({
-        lead_id: leadId,
-        type: newTaskType,
-        title: newTaskTitle.trim(),
-        priority: newTaskPriority,
-        due_date: newTaskDueDate || undefined,
-        status: "open",
-      });
+      if (hasActivity) {
+        await api.createActivity({
+          lead_id: leadId,
+          type: activityType,
+          subject: activitySubject.trim(),
+          outcome: activityOutcome || undefined,
+        });
+      }
+      if (hasFollowUp && !decisionSchedulesFollowUp) {
+        await api.createTask({
+          lead_id: leadId,
+          type: newTaskType,
+          title: newTaskTitle.trim(),
+          priority: newTaskPriority,
+          due_date: newTaskDueDate || undefined,
+          status: "open",
+        });
+      }
+
+      let guidance: string;
+      if (hasDecision && selectedDeal) {
+        await api.decideOpportunity(selectedDeal.opportunity_id, {
+          decision: decision as "bought" | "decision_pending" | "lost",
+          reason: decisionReason.trim() || undefined,
+          next_follow_up_title: decisionSchedulesFollowUp ? newTaskTitle.trim() : undefined,
+          next_follow_up_type: newTaskType,
+          next_follow_up_due_date: newTaskDueDate || undefined,
+          next_follow_up_priority: newTaskPriority,
+        });
+        guidance =
+          decision === "bought"
+            ? "Saved. This deal is marked as Bought."
+            : decision === "lost"
+            ? "Saved. This deal is marked as Lost."
+            : `Saved. The customer is still deciding — follow-up on ${newTaskDueDate || "the scheduled date"}.`;
+      } else if (hasFollowUp) {
+        guidance = `Saved. Next: ${newTaskTitle.trim()}${newTaskDueDate ? ` on ${newTaskDueDate}` : ""}.`;
+      } else {
+        guidance = "Saved. Activity logged.";
+      }
+
+      setActivitySubject("");
+      setActivityOutcome("");
       setNewTaskTitle("");
       setNewTaskDueDate("");
-      setShowCreateTask(false);
-      setTaskMsg("Task created successfully!");
-      setTimeout(() => setTaskMsg(null), 3000);
-      loadLead(leadId);
-    } catch (e: any) {
-      setTaskMsg("Failed to create task: " + e.message);
+      setDecision("");
+      setDecisionReason("");
+      setTaskMsg(guidance);
+      setTimeout(() => setTaskMsg(null), 6000);
+      onLeadUpdated?.();
+    } catch {
+      setTaskMsg("Could not save your update. Please try again.");
     } finally {
       setTaskSubmitting(false);
     }
   };
 
-  const getNextStages = (currentStatus: string): string[] => {
-    switch (currentStatus) {
-      case "New":
-        return ["Contacted", "Disqualified"];
-      case "Contacted":
-        return ["Qualified", "Disqualified"];
-      case "Qualified":
-        return ["Converted", "Disqualified"];
-      default:
-        return [];
-    }
-  };
-
-  const handleStageTransition = async (toStage: string) => {
-    if (!leadId) return;
-    setTransitioning(true);
-    setTransitionMsg(null);
-    try {
-      await api.transitionLeadStage(leadId, {
-        to_stage: toStage,
-        changed_by: details?.lead.assigned_salesrep_id || undefined,
-        reason: `Stage transition to ${toStage} executed from Sales Operations Console`,
-      });
-      setTransitionMsg({
-        type: "success",
-        text: `Stage successfully transitioned to "${toStage}". Monotonic history logged.`,
-      });
-      setTimeout(() => setTransitionMsg(null), 4000);
-      await loadLead(leadId);
-      if (onLeadUpdated) onLeadUpdated();
-    } catch (err: any) {
-      setTransitionMsg({
-        type: "error",
-        text: err.message || `Failed to transition lead to ${toStage}`,
-      });
-      setTimeout(() => setTransitionMsg(null), 5000);
-    } finally {
-      setTransitioning(false);
-    }
-  };
-
+  // Re-read the lead whenever it changes or the shared refresh bus fires, so the
+  // drawer never shows stale status, activities, follow-ups, or deals.
   useEffect(() => {
     if (leadId) {
       loadLead(leadId);
     } else {
       setDetails(null);
     }
-  }, [leadId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leadId, version]);
 
   const loadLead = async (id: string) => {
     try {
@@ -183,6 +213,8 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
         return <span className="badge badge-neutral">Closed Lost</span>;
       case "negotiation":
         return <span className="badge badge-warning">Negotiation</span>;
+      case "decision_pending":
+        return <span className="badge badge-warning">Decision Pending</span>;
       case "proposal":
         return <span className="badge badge-primary">Proposal</span>;
       case "qualification":
@@ -193,6 +225,19 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
         return <span className="badge badge-neutral">{stage}</span>;
     }
   };
+
+  const OPP_STAGE_LABELS: Record<string, string> = {
+    discovery: "Discovery",
+    qualification: "Qualification",
+    proposal: "Proposal",
+    negotiation: "Negotiation",
+    decision_pending: "Decision Pending",
+    closed_won: "Bought",
+    closed_lost: "Lost",
+  };
+
+  const oppStageLabel = (stage: string) =>
+    OPP_STAGE_LABELS[(stage || "").toLowerCase().replace(" ", "_")] || (stage || "").replace(/_/g, " ");
 
   const getActivityOutcomeBadge = (outcome: string) => {
     switch (outcome?.toLowerCase()) {
@@ -209,6 +254,16 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
     }
   };
 
+  const scoring = details?.scoring_breakdown;
+  const assignedRep = details?.salesrep?.name?.trim() || "Unassigned";
+  const openTasks = (details?.tasks || []).filter((t) =>
+    ["open", "in_progress"].includes((t.status || "").toLowerCase())
+  );
+  const nextFollowUp = openTasks.reduce<(typeof openTasks)[number] | null>(
+    (soonest, t) => (!soonest || (t.due_date || "") < (soonest.due_date || "") ? t : soonest),
+    null
+  );
+
   if (!leadId) return null;
 
   return (
@@ -218,10 +273,9 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
         <div className="drawer-header">
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-              <span className="id-tag">{leadId}</span>
               {details && getStatusBadge(details.lead.status)}
               {details?.lead.is_duplicate && (
-                <span className="badge badge-warning">Duplicate Lead</span>
+                <span className="badge badge-warning">Possible duplicate</span>
               )}
             </div>
             <h2 style={{ fontSize: "18px", fontWeight: 600, color: "var(--text-main)", margin: "4px 0 2px" }}>
@@ -250,43 +304,19 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
               className={`tab-btn ${activeTab === "overview" ? "active" : ""}`}
               onClick={() => setActiveTab("overview")}
             >
-              Scoring & Profile
-            </button>
-            <button
-              className={`tab-btn ${activeTab === "opportunities" ? "active" : ""}`}
-              onClick={() => setActiveTab("opportunities")}
-            >
-              Deals ({details?.opportunities.length || 0})
+              Overview
             </button>
             <button
               className={`tab-btn ${activeTab === "activities" ? "active" : ""}`}
               onClick={() => setActiveTab("activities")}
             >
-              Activities ({details?.activities.length || 0})
+              Activity ({details?.activities.length || 0})
             </button>
             <button
-              className={`tab-btn ${activeTab === "routing" ? "active" : ""}`}
-              onClick={() => setActiveTab("routing")}
+              className={`tab-btn ${activeTab === "details" ? "active" : ""}`}
+              onClick={() => setActiveTab("details")}
             >
-              Routing
-            </button>
-            <button
-              className={`tab-btn ${activeTab === "consent" ? "active" : ""}`}
-              onClick={() => setActiveTab("consent")}
-            >
-              Consent ({details?.consents.length || 0})
-            </button>
-            <button
-              className={`tab-btn ${activeTab === "history" ? "active" : ""}`}
-              onClick={() => setActiveTab("history")}
-            >
-              Stage History ({details?.stage_history.length || 0})
-            </button>
-            <button
-              className={`tab-btn ${activeTab === "audit" ? "active" : ""}`}
-              onClick={() => setActiveTab("audit")}
-            >
-              Decision Audit ({details?.task_decisions.length || 0})
+              Details
             </button>
           </div>
         </div>
@@ -295,7 +325,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
         <div className="drawer-body">
           {loading && (
             <div style={{ textAlign: "center", padding: "30px", color: "var(--text-muted)" }}>
-              Loading full 360° lead profile...
+              Loading lead...
             </div>
           )}
           {error && (
@@ -306,10 +336,10 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
 
           {details && !loading && (
             <div>
-              {/* Tab: Overview & Scoring */}
+              {/* Tab: Overview */}
               {activeTab === "overview" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                  {/* Lifecycle Progression & Stage Action Bar */}
+                  {/* Current sales stage + the single primary action */}
                   <div
                     className="card"
                     style={{
@@ -325,111 +355,312 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
                       <div>
                         <div style={{ fontSize: "11px", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em", color: "var(--text-muted)" }}>
-                          Lifecycle Progression
+                          Current sales stage
                         </div>
                         <div style={{ fontSize: "13px", color: "var(--text-main)", fontWeight: 500, marginTop: "3px", display: "flex", alignItems: "center", gap: "6px" }}>
-                          <span>Stage:</span>
                           {getStatusBadge(details.lead.status)}
-                          {details.scoring_breakdown.frozen && (
-                            <span style={{ fontSize: "11px", color: "var(--success-text)", fontWeight: 600 }}>
-                              • Finalized / Score Frozen
-                            </span>
-                          )}
                         </div>
                       </div>
 
-                      {/* Action buttons */}
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                        {getNextStages(details.lead.status).map((tgtStage) => (
-                          <button
-                            key={tgtStage}
-                            className={tgtStage === "Disqualified" ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
-                            disabled={transitioning}
-                            onClick={() => handleStageTransition(tgtStage)}
-                            style={{ display: "inline-flex", alignItems: "center", gap: "5px", padding: "6px 12px" }}
-                          >
-                            {transitioning ? (
-                              "Updating..."
-                            ) : tgtStage === "Disqualified" ? (
-                              "Disqualify Lead"
-                            ) : (
-                              <>
-                                Advance to {tgtStage}
-                                <ArrowRight size={13} />
-                              </>
-                            )}
-                          </button>
-                        ))}
-                        {getNextStages(details.lead.status).length === 0 && (
-                          <span style={{ fontSize: "12px", color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: "4px" }}>
-                            <ShieldCheck size={14} color="var(--success)" /> Terminal Stage (Locked)
-                          </span>
-                        )}
-                      </div>
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => setShowProgress((prev) => !prev)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                      >
+                        <Plus size={14} />
+                        <span>{showProgress ? "Close" : "Update Progress"}</span>
+                      </button>
                     </div>
 
-                    {transitionMsg && (
+                    {showProgress && (
                       <div
                         style={{
-                          padding: "8px 12px",
-                          borderRadius: "4px",
-                          fontSize: "12px",
-                          fontWeight: 500,
-                          backgroundColor: transitionMsg.type === "success" ? "var(--success-bg)" : "var(--danger-bg)",
-                          color: transitionMsg.type === "success" ? "var(--success-text)" : "var(--danger-text)",
-                          border: `1px solid ${transitionMsg.type === "success" ? "var(--success)" : "var(--danger)"}`,
+                          borderTop: "1px solid var(--border-subtle)",
+                          paddingTop: "12px",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "10px",
                         }}
                       >
-                        {transitionMsg.text}
+                        <div>
+                          <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-main)" }}>
+                            What happened, and what is next?
+                          </div>
+                          <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
+                            Log your last contact, schedule the next follow-up, and record the buying decision.
+                          </p>
+                        </div>
+
+                        {taskMsg && (
+                          <div
+                            style={{
+                              fontSize: "12px",
+                              padding: "6px 10px",
+                              borderRadius: "4px",
+                              background: "var(--primary-light)",
+                              color: "var(--primary)",
+                            }}
+                          >
+                            {taskMsg}
+                          </div>
+                        )}
+
+                        <form onSubmit={handleSaveProgress} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                          {/* 1. What happened */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                            <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                              1. What happened?
+                            </div>
+                            <div className="grid-2" style={{ gap: "8px" }}>
+                              <select
+                                className="select-compact"
+                                style={{ height: "30px" }}
+                                value={activityType}
+                                onChange={(e) => setActivityType(e.target.value)}
+                                title="How did you reach them?"
+                              >
+                                <option value="call">Call</option>
+                                <option value="email">Email</option>
+                                <option value="meeting">Meeting</option>
+                                <option value="demo">Demo</option>
+                              </select>
+                              <select
+                                className="select-compact"
+                                style={{ height: "30px" }}
+                                value={activityOutcome}
+                                onChange={(e) => setActivityOutcome(e.target.value)}
+                                title="How did it go?"
+                              >
+                                <option value="">How did it go? (optional)</option>
+                                <option value="connected">Connected</option>
+                                <option value="left voicemail">Left voicemail</option>
+                                <option value="no answer">No answer</option>
+                                <option value="interested">Interested</option>
+                                <option value="not interested">Not interested</option>
+                              </select>
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="What happened? (e.g. Discussed pricing, asked for a proposal)"
+                              className="input-search"
+                              style={{ width: "100%", height: "30px", fontSize: "12px" }}
+                              value={activitySubject}
+                              onChange={(e) => setActivitySubject(e.target.value)}
+                            />
+                          </div>
+
+                          {/* 2. What is next */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                            <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                              2. What is next?
+                            </div>
+                            <input
+                              type="text"
+                              placeholder="Next step (e.g. Send pricing, Call back about quote)"
+                              className="input-search"
+                              style={{ width: "100%", height: "30px", fontSize: "12px" }}
+                              value={newTaskTitle}
+                              onChange={(e) => setNewTaskTitle(e.target.value)}
+                            />
+                            <div className="grid-3" style={{ gap: "8px" }}>
+                              <select
+                                className="select-compact"
+                                style={{ height: "30px" }}
+                                value={newTaskType}
+                                onChange={(e) => setNewTaskType(e.target.value)}
+                                title="How will you follow up?"
+                              >
+                                <option value="call">Call</option>
+                                <option value="email">Email</option>
+                                <option value="meeting">Meeting</option>
+                                <option value="demo">Demo</option>
+                              </select>
+                              <select
+                                className="select-compact"
+                                style={{ height: "30px" }}
+                                value={newTaskPriority}
+                                onChange={(e) => setNewTaskPriority(e.target.value)}
+                                title="Priority"
+                              >
+                                <option value="low">Low priority</option>
+                                <option value="medium">Medium priority</option>
+                                <option value="high">High priority</option>
+                              </select>
+                              <input
+                                type="date"
+                                className="select-compact"
+                                style={{ height: "30px" }}
+                                value={newTaskDueDate}
+                                onChange={(e) => setNewTaskDueDate(e.target.value)}
+                                title="Due date"
+                              />
+                            </div>
+                          </div>
+
+                          {/* 3. Buying decision */}
+                          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                            <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>
+                              3. Buying decision (optional)
+                            </div>
+                            {deals.length === 0 ? (
+                              <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: 0 }}>
+                                No deal on this lead yet — a deal is created once the lead is qualified.
+                              </p>
+                            ) : (
+                              <>
+                                {deals.length > 1 && (
+                                  <select
+                                    className="select-compact"
+                                    style={{ height: "30px" }}
+                                    value={dealId || deals[0].opportunity_id}
+                                    onChange={(e) => setDealId(e.target.value)}
+                                    title="Which deal is this decision for?"
+                                  >
+                                    {deals.map((d) => (
+                                      <option key={d.opportunity_id} value={d.opportunity_id}>
+                                        {formatCurrency(d.amount)} · {oppStageLabel(d.stage)}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )}
+                                <div className="grid-2" style={{ gap: "8px" }}>
+                                  <select
+                                    className="select-compact"
+                                    style={{ height: "30px" }}
+                                    value={decision}
+                                    onChange={(e) => setDecision(e.target.value as typeof decision)}
+                                    title="Has the customer decided?"
+                                  >
+                                    <option value="">No decision yet</option>
+                                    <option value="bought">Bought</option>
+                                    <option value="decision_pending">Decision Pending</option>
+                                    <option value="lost">Lost</option>
+                                  </select>
+                                  {decision && (
+                                    <input
+                                      type="text"
+                                      placeholder="Reason (optional)"
+                                      className="input-search"
+                                      style={{ height: "30px", fontSize: "12px" }}
+                                      value={decisionReason}
+                                      onChange={(e) => setDecisionReason(e.target.value)}
+                                    />
+                                  )}
+                                </div>
+                                {decision === "decision_pending" && (
+                                  <p style={{ fontSize: "11px", color: "var(--warning-text)", margin: 0 }}>
+                                    Decision Pending keeps the deal active — add a follow-up above.
+                                  </p>
+                                )}
+                              </>
+                            )}
+                          </div>
+
+                          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              type="submit"
+                              className="btn btn-primary btn-sm"
+                              disabled={taskSubmitting}
+                              style={{ height: "28px" }}
+                            >
+                              {taskSubmitting ? "Saving..." : "Save progress"}
+                            </button>
+                          </div>
+                        </form>
                       </div>
                     )}
                   </div>
 
-                  {/* Lead Scorecard */}
+                  {/* At a glance: assigned rep & next follow-up */}
+                  <div className="grid-2" style={{ gap: "12px" }}>
+                    <div className="card" style={{ padding: "14px" }}>
+                      <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <User size={13} /> Assigned representative
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "14px",
+                          fontWeight: 600,
+                          color: assignedRep === "Unassigned" ? "var(--warning-text)" : "var(--text-main)",
+                        }}
+                      >
+                        {assignedRep}
+                      </div>
+                      <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
+                        {assignedRep === "Unassigned"
+                          ? "Not yet assigned — needs review"
+                          : details.salesrep?.territory
+                          ? `Covers ${details.salesrep.territory}`
+                          : "Owns this lead"}
+                      </div>
+                    </div>
+
+                    <div className="card" style={{ padding: "14px" }}>
+                      <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "6px", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <CalendarClock size={13} /> Next follow-up
+                      </div>
+                      {nextFollowUp ? (
+                        <>
+                          <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)" }}>
+                            {nextFollowUp.title}
+                          </div>
+                          <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px", textTransform: "capitalize" }}>
+                            Due {nextFollowUp.due_date ? String(nextFollowUp.due_date).slice(0, 10) : "—"} · {nextFollowUp.priority} priority
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: "13px", color: "var(--text-muted)" }}>No follow-up scheduled</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Lead score explained */}
                   <div className="card" style={{ background: "var(--bg-subtle)", padding: "16px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px", flexWrap: "wrap" }}>
                       <div>
-                        <div style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)" }}>
-                          Calculated Lead Score
-                        </div>
-                        <div style={{ fontSize: "26px", fontWeight: 600, color: "var(--primary)", lineHeight: 1.2 }}>
-                          {details.scoring_breakdown.lead_score} <span style={{ fontSize: "14px", fontWeight: 400, color: "var(--text-muted)" }}>/ 100</span>
+                        <div style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)" }}>Lead score</div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
+                          <div style={{ fontSize: "26px", fontWeight: 600, color: "var(--primary)", lineHeight: 1.2 }}>
+                            {details.scoring_breakdown.lead_score}
+                          </div>
+                          <span style={{ fontSize: "13px", color: "var(--text-muted)" }}>out of 100</span>
+                          {scoring?.band && <span className="badge badge-primary">{scoring.band}</span>}
                         </div>
                       </div>
                       {details.scoring_breakdown.frozen && (
-                        <span className="badge badge-success">Score Frozen (Converted)</span>
+                        <span className="badge badge-success">Final score (converted)</span>
                       )}
                     </div>
 
-                    <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
-                      Multi-Factor Composite Score Evaluation (Model Active)
-                    </div>
+                    {scoring?.summary && (
+                      <p style={{ fontSize: "13px", color: "var(--text-secondary)", margin: "10px 0 14px", lineHeight: 1.5 }}>
+                        {scoring.summary}
+                      </p>
+                    )}
 
-                    {/* Component scores */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
-                      <div style={{ padding: "10px", background: "#ffffff", borderRadius: "6px", border: "1px solid var(--border-subtle)" }}>
-                        <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Fit (50% wt)</div>
-                        <div style={{ fontWeight: 600, fontSize: "16px", color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>
-                          {details.scoring_breakdown.fit_score}
+                    {/* Why this score — plain-language breakdown */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {(scoring?.factors ?? []).map((factor) => (
+                        <div
+                          key={factor.key}
+                          style={{ padding: "10px 12px", background: "#ffffff", borderRadius: "6px", border: "1px solid var(--border-subtle)" }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-main)" }}>{factor.label}</span>
+                            <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>
+                              {factor.score}
+                            </span>
+                          </div>
+                          {factor.text && (
+                            <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "3px" }}>{factor.text}</div>
+                          )}
                         </div>
-                      </div>
-                      <div style={{ padding: "10px", background: "#ffffff", borderRadius: "6px", border: "1px solid var(--border-subtle)" }}>
-                        <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Intent (30% wt)</div>
-                        <div style={{ fontWeight: 600, fontSize: "16px", color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>
-                          {details.scoring_breakdown.intent_score}
-                        </div>
-                      </div>
-                      <div style={{ padding: "10px", background: "#ffffff", borderRadius: "6px", border: "1px solid var(--border-subtle)" }}>
-                        <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Engagement (20% wt)</div>
-                        <div style={{ fontWeight: 600, fontSize: "16px", color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>
-                          {details.scoring_breakdown.engagement_score}
-                        </div>
-                      </div>
+                      ))}
                     </div>
                   </div>
 
                   {/* Company & Profile Info */}
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                  <div className="grid-2" style={{ gap: "12px" }}>
                     <div className="card" style={{ padding: "14px" }}>
                       <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-muted)", marginBottom: "8px", display: "flex", alignItems: "center", gap: "4px" }}>
                         <Building size={13} /> Company Details
@@ -461,87 +692,87 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                     </div>
                   </div>
 
-                  {/* Tasks Summary */}
+                  {/* Recent activity preview */}
                   <div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                       <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)" }}>
-                        Associated Follow-up Tasks ({details.tasks.length})
+                        Recent activity
                       </h3>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: "11px", height: "26px", padding: "0 8px" }}
-                        onClick={() => setShowCreateTask(!showCreateTask)}
-                      >
-                        <Plus size={12} />
-                        <span>{showCreateTask ? "Cancel" : "Add Task"}</span>
-                      </button>
+                      {details.activities.length > 3 && (
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ fontSize: "11px", height: "26px", padding: "0 8px" }}
+                          onClick={() => setActiveTab("activities")}
+                        >
+                          View all ({details.activities.length})
+                        </button>
+                      )}
                     </div>
 
-                    {taskMsg && (
-                      <div style={{ fontSize: "12px", padding: "6px 10px", borderRadius: "4px", background: "var(--primary-light)", color: "var(--primary)", marginBottom: "8px" }}>
-                        {taskMsg}
+                    {details.activities.length === 0 ? (
+                      <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+                        Nothing recorded yet. Use “Update Progress” to log what happened.
+                      </p>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        {[...details.activities]
+                          .sort((a, b) => String(b.activity_date).localeCompare(String(a.activity_date)))
+                          .slice(0, 3)
+                          .map((act) => (
+                            <div
+                              key={act.activity_id}
+                              style={{
+                                padding: "9px 12px",
+                                border: "1px solid var(--border-subtle)",
+                                borderRadius: "6px",
+                                fontSize: "13px",
+                                background: "#ffffff",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                gap: "10px",
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <div className="text-truncate" style={{ fontWeight: 500, color: "var(--text-main)" }}>
+                                  {act.subject}
+                                </div>
+                                <div style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "capitalize" }}>
+                                  {act.type} · {act.activity_date?.slice(0, 10)}
+                                </div>
+                              </div>
+                              {getActivityOutcomeBadge(act.outcome)}
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Follow-ups */}
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                      <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)" }}>
+                        Follow-ups ({details.tasks.length})
+                      </h3>
+                    </div>
+
+                    {followUpMsg && (
+                      <div
+                        style={{
+                          marginBottom: "8px",
+                          padding: "7px 11px",
+                          borderRadius: "6px",
+                          fontSize: "12px",
+                          backgroundColor: followUpMsg.startsWith("Could not") ? "var(--bg-danger-soft, #fef2f2)" : "var(--bg-success-soft, #f0fdf4)",
+                          color: followUpMsg.startsWith("Could not") ? "var(--text-danger, #b91c1c)" : "var(--text-success, #15803d)",
+                        }}
+                      >
+                        {followUpMsg}
                       </div>
                     )}
 
-                    {showCreateTask && (
-                      <form onSubmit={handleCreateTask} style={{ background: "#f8fafc", padding: "12px", borderRadius: "6px", border: "1px solid var(--border-subtle)", marginBottom: "12px" }}>
-                        <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: "8px" }}>New Follow-up Task</div>
-                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                          <input
-                            type="text"
-                            placeholder="Task title (e.g. Follow-up demo call)..."
-                            className="input-search"
-                            style={{ width: "100%", height: "30px", fontSize: "12px" }}
-                            value={newTaskTitle}
-                            onChange={(e) => setNewTaskTitle(e.target.value)}
-                            required
-                          />
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
-                            <select
-                              className="select-compact"
-                              style={{ height: "30px" }}
-                              value={newTaskType}
-                              onChange={(e) => setNewTaskType(e.target.value)}
-                            >
-                              <option value="email">Email</option>
-                              <option value="call">Call</option>
-                              <option value="meeting">Meeting</option>
-                              <option value="demo">Demo</option>
-                            </select>
-                            <select
-                              className="select-compact"
-                              style={{ height: "30px" }}
-                              value={newTaskPriority}
-                              onChange={(e) => setNewTaskPriority(e.target.value)}
-                            >
-                              <option value="low">Low Priority</option>
-                              <option value="medium">Medium Priority</option>
-                              <option value="high">High Priority</option>
-                            </select>
-                            <input
-                              type="date"
-                              className="select-compact"
-                              style={{ height: "30px" }}
-                              value={newTaskDueDate}
-                              onChange={(e) => setNewTaskDueDate(e.target.value)}
-                            />
-                          </div>
-                          <div style={{ display: "flex", justifyContent: "flex-end", gap: "6px" }}>
-                            <button
-                              type="submit"
-                              className="btn btn-primary btn-sm"
-                              disabled={taskSubmitting}
-                              style={{ height: "28px" }}
-                            >
-                              {taskSubmitting ? "Saving..." : "Create Task"}
-                            </button>
-                          </div>
-                        </div>
-                      </form>
-                    )}
-
                     {details.tasks.length === 0 ? (
-                      <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>No outreach tasks recorded for this lead.</p>
+                      <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>No follow-ups scheduled yet.</p>
                     ) : (
                       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                         {details.tasks.map((t) => (
@@ -564,19 +795,37 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                               </div>
                               <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Due: {t.due_date} • Priority: <span style={{ textTransform: "capitalize" }}>{t.priority}</span></div>
                             </div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <select
-                                className="select-compact"
-                                style={{ height: "26px", fontSize: "11px", padding: "0 6px" }}
-                                value={t.status}
-                                onChange={(e) => handleUpdateTaskStatus(t.task_id, e.target.value)}
-                                title="Update task status"
-                              >
-                                <option value="open">Open</option>
-                                <option value="in_progress">In Progress</option>
-                                <option value="completed">Completed</option>
-                                <option value="cancelled">Cancelled</option>
-                              </select>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                              {["open", "in_progress"].includes((t.status || "").toLowerCase()) ? (
+                                <>
+                                  {t.status?.toLowerCase() === "open" && (
+                                    <button
+                                      className="btn btn-secondary btn-sm"
+                                      onClick={() => handleUpdateTaskStatus(t.task_id, "in_progress")}
+                                      title="Start working on this follow-up"
+                                    >
+                                      Start
+                                    </button>
+                                  )}
+                                  <button
+                                    className="btn btn-primary btn-sm"
+                                    onClick={() => handleUpdateTaskStatus(t.task_id, "completed")}
+                                    title="Mark this follow-up as done"
+                                  >
+                                    <Check size={12} />
+                                    <span>Done</span>
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => handleUpdateTaskStatus(t.task_id, "open")}
+                                  title="Reopen this follow-up"
+                                >
+                                  <RotateCcw size={12} />
+                                  <span>Reopen</span>
+                                </button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -586,16 +835,16 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                 </div>
               )}
 
-              {/* Tab: Opportunities & Outcomes */}
-              {activeTab === "opportunities" && (
-                <div>
+              {/* Details: Deals */}
+              {activeTab === "details" && (
+                <div style={{ marginBottom: "26px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
                     <div>
                       <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)", margin: 0 }}>
-                        Pipeline Opportunities ({details.opportunities.length})
+                        Deals ({details.opportunities.length})
                       </h3>
                       <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                        Deal progression and rule-governed won/lost outcomes
+                        Opportunities linked to this lead
                       </p>
                     </div>
                   </div>
@@ -603,9 +852,9 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                   {details.opportunities.length === 0 ? (
                     <div className="card" style={{ padding: "24px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>
                       <Briefcase size={24} color="var(--text-light)" style={{ margin: "0 auto 8px", display: "block" }} />
-                      No opportunities associated with this lead.
+                      No deals yet for this lead.
                       <div style={{ fontSize: "12px", marginTop: "4px" }}>
-                        Opportunities are created when leads advance to Qualified or Converted status.
+                        A deal is created once the lead is qualified.
                       </div>
                     </div>
                   ) : (
@@ -622,10 +871,9 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                         >
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <span className="id-tag">{opp.opportunity_id}</span>
                               {getOppStageBadge(opp.stage)}
                               {opp.is_duplicate && (
-                                <span className="badge badge-warning">Duplicate Opp</span>
+                                <span className="badge badge-warning">Possible duplicate</span>
                               )}
                             </div>
                             <div style={{ fontWeight: 600, fontSize: "15px", color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>
@@ -633,7 +881,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                             </div>
                           </div>
 
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "12px", color: "var(--text-secondary)" }}>
+                          <div className="grid-2" style={{ gap: "8px", fontSize: "12px", color: "var(--text-secondary)" }}>
                             <div>
                               Close Date: <span style={{ color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>{opp.close_date || "—"}</span>
                             </div>
@@ -671,17 +919,17 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                 <div>
                   <div style={{ marginBottom: "12px" }}>
                     <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)", margin: 0 }}>
-                      Logged Activity History ({details.activities.length})
+                      Activity history ({details.activities.length})
                     </h3>
                     <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                      Append-only record of cadence interactions and buyer touchpoints
+                      Every contact with this customer, in order
                     </p>
                   </div>
 
                   {details.activities.length === 0 ? (
                     <div className="card" style={{ padding: "24px", textAlign: "center", color: "var(--text-muted)", fontSize: "13px" }}>
                       <Activity size={24} color="var(--text-light)" style={{ margin: "0 auto 8px", display: "block" }} />
-                      No activity touchpoints recorded for this lead.
+                      Nothing recorded yet for this lead.
                     </div>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -698,7 +946,6 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                         >
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                              <span className="id-tag">{act.activity_id}</span>
                               <span className="badge badge-neutral" style={{ textTransform: "capitalize" }}>{act.type}</span>
                               <span style={{ fontWeight: 500, color: "var(--text-main)" }}>{act.subject}</span>
                             </div>
@@ -715,13 +962,13 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                 </div>
               )}
 
-              {/* Tab: Routing & Rep Assignment */}
-              {activeTab === "routing" && (
-                <div>
+              {/* Details: Assignment */}
+              {activeTab === "details" && (
+                <div style={{ marginBottom: "26px" }}>
                   {details.routing_status.is_assigned ? (
                     <div className="card" style={{ borderLeft: "4px solid var(--success)", marginBottom: "16px" }}>
                       <div style={{ fontSize: "12px", color: "var(--success-text)", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
-                        <ShieldCheck size={14} /> Representative Assigned
+                        <ShieldCheck size={14} /> Assigned representative
                       </div>
                       <div style={{ fontSize: "16px", fontWeight: 600, color: "var(--text-main)", marginTop: "4px" }}>
                         {details.salesrep.name}
@@ -730,33 +977,30 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                         Email: {details.salesrep.email}
                       </div>
                       <div style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "6px" }}>
-                        Territory Match: <span style={{ color: "var(--success)", fontWeight: 500 }}>{details.salesrep.territory}</span> (Lead: {details.lead.territory})
+                        Territory: <span style={{ color: "var(--success)", fontWeight: 500 }}>{details.salesrep.territory}</span> (Lead: {details.lead.territory})
                       </div>
                       <div style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "2px" }}>
-                        Specialty Match: <span style={{ color: "var(--success)", fontWeight: 500 }}>{details.salesrep.product_specialty}</span> (Product: {details.lead.product_interest})
+                        Specialty: <span style={{ color: "var(--success)", fontWeight: 500 }}>{details.salesrep.product_specialty}</span> (Product: {details.lead.product_interest})
                       </div>
                     </div>
                   ) : (
                     <div className="card" style={{ borderLeft: "4px solid var(--warning)", marginBottom: "16px", background: "var(--warning-bg)" }}>
                       <div style={{ fontSize: "12px", color: "var(--warning-text)", fontWeight: 600, display: "flex", alignItems: "center", gap: "4px" }}>
-                        <AlertTriangle size={14} /> Explicitly Unassigned State (Routing Exception)
-                      </div>
-                      <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--warning-text)", marginTop: "4px" }}>
-                        Reason: {details.routing_status.routing_reason || "no_compatible_salesrep"}
+                        <AlertTriangle size={14} /> Not yet assigned
                       </div>
                       <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "4px", lineHeight: 1.45 }}>
-                        No active sales representative matched both territory '{details.lead.territory}' and product interest '{details.lead.product_interest}'. Follow-up outreach is held until compatible assignment.
+                        No sales representative covers both territory '{details.lead.territory}' and product interest '{details.lead.product_interest}'. Outreach is on hold until someone is assigned.
                       </p>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Tab: Consent Compliance */}
-              {activeTab === "consent" && (
-                <div>
+              {/* Details: Consent */}
+              {activeTab === "details" && (
+                <div style={{ marginBottom: "26px" }}>
                   <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)", marginBottom: "10px" }}>
-                    Append-Only Consent History
+                    Consent
                   </h3>
                   {details.consents.length === 0 ? (
                     <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>No consent records on file for this contact.</p>
@@ -765,7 +1009,6 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                       {details.consents.map((csn) => (
                         <div key={csn.consent_id} style={{ padding: "10px 14px", border: "1px solid var(--border-subtle)", borderRadius: "6px", fontSize: "13px" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                            <span className="id-tag">{csn.consent_id}</span>
                             <span className={`badge ${csn.status === 'granted' ? 'badge-success' : 'badge-danger'}`}>
                               {csn.status}
                             </span>
@@ -780,94 +1023,61 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({ leadId, onCl
                 </div>
               )}
 
-              {/* Tab: Stage History */}
-              {activeTab === "history" && (
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
-                    <div>
-                      <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)", margin: 0 }}>
-                        Monotonic Lifecycle Transitions
-                      </h3>
-                      <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
-                        Append-only event audit trail of stage progression
-                      </p>
-                    </div>
-
-                    {getNextStages(details.lead.status).length > 0 && (
-                      <div style={{ display: "flex", gap: "6px" }}>
-                        {getNextStages(details.lead.status).map((tgtStage) => (
-                          <button
-                            key={tgtStage}
-                            className={tgtStage === "Disqualified" ? "btn btn-secondary btn-sm" : "btn btn-primary btn-sm"}
-                            disabled={transitioning}
-                            onClick={() => handleStageTransition(tgtStage)}
-                            style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
-                          >
-                            {transitioning ? "Updating..." : tgtStage === "Disqualified" ? "Disqualify" : <>Advance to {tgtStage} <ArrowRight size={12} /></>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+              {/* Details: Stage history */}
+              {activeTab === "details" && (
+                <div style={{ marginBottom: "26px" }}>
+                  <div style={{ marginBottom: "12px" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)", margin: 0 }}>
+                      Stage history
+                    </h3>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
+                      How this lead moved between sales stages, and who moved it
+                    </p>
                   </div>
 
-                  {transitionMsg && (
-                    <div
-                      style={{
-                        marginBottom: "12px",
-                        padding: "8px 12px",
-                        borderRadius: "4px",
-                        fontSize: "12px",
-                        fontWeight: 500,
-                        backgroundColor: transitionMsg.type === "success" ? "var(--success-bg)" : "var(--danger-bg)",
-                        color: transitionMsg.type === "success" ? "var(--success-text)" : "var(--danger-text)",
-                        border: `1px solid ${transitionMsg.type === "success" ? "var(--success)" : "var(--danger)"}`,
-                      }}
-                    >
-                      {transitionMsg.text}
+                  {details.stage_history.length === 0 ? (
+                    <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>No stage changes recorded yet.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {details.stage_history.map((sh, idx) => (
+                        <div key={sh.stage_history_id} style={{ padding: "10px 14px", border: "1px solid var(--border-subtle)", borderRadius: "6px", fontSize: "13px", background: "#f8fafc" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                            <span style={{ fontWeight: 500, color: "var(--text-main)" }}>Step {idx + 1}: {sh.from_stage || "None"} → {sh.to_stage}</span>
+                          </div>
+                          <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>When: {sh.changed_at}</div>
+                          <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>By: {sh.changed_by}</div>
+                          <div style={{ color: "var(--text-secondary)", fontSize: "12px", marginTop: "4px" }}>{sh.reason}</div>
+                        </div>
+                      ))}
                     </div>
                   )}
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    {details.stage_history.map((sh, idx) => (
-                      <div key={sh.stage_history_id} style={{ padding: "10px 14px", border: "1px solid var(--border-subtle)", borderRadius: "6px", fontSize: "13px", background: "#f8fafc" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                          <span style={{ fontWeight: 500, color: "var(--text-main)" }}>Step {idx + 1}: {sh.from_stage || "None"} → {sh.to_stage}</span>
-                          <span className="id-tag">{sh.stage_history_id}</span>
-                        </div>
-                        <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>Timestamp: {sh.changed_at}</div>
-                        <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>Actor: {sh.changed_by}</div>
-                        <div style={{ color: "var(--text-secondary)", fontSize: "12px", marginTop: "4px" }}>{sh.reason}</div>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
 
-              {/* Tab: Decision Audit */}
-              {activeTab === "audit" && (
-                <div>
+              {/* Details: Follow-up decisions */}
+              {activeTab === "details" && (
+                <div style={{ marginBottom: "26px" }}>
                   <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)", marginBottom: "6px" }}>
-                    Task Decision Audit Log (Explainability)
+                    Follow-up decisions
                   </h3>
                   <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
-                    Audit record evaluated against business rules to guarantee explainable task gating.
+                    Why the system did or did not schedule a follow-up for this lead.
                   </p>
                   {details.task_decisions.length === 0 ? (
-                    <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>No candidate decision logs evaluated for this lead.</p>
+                    <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>No follow-up decisions recorded yet.</p>
                   ) : (
                     <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                       {details.task_decisions.map((td) => (
                         <div key={td.decision_id} style={{ padding: "10px 14px", border: "1px solid var(--border-subtle)", borderRadius: "6px", fontSize: "13px" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                            <span className="id-tag">{td.decision_id}</span>
                             <span className={`badge ${td.decision === 'created' ? 'badge-success' : td.decision === 'deferred' ? 'badge-warning' : 'badge-danger'}`}>
-                              Decision: {td.decision}
+                              Outcome: {td.decision}
                             </span>
                           </div>
                           <div style={{ fontSize: "12px" }}>Reason: <span style={{ fontWeight: 500, color: "var(--text-main)" }}>{td.reason}</span></div>
-                          <div style={{ color: "var(--text-muted)", fontSize: "11px", marginTop: "2px" }}>Consent Status: {td.consent_status_at_evaluation}</div>
-                          <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>Evaluated At: {td.evaluated_at}</div>
-                          {td.task_id && <div style={{ color: "var(--success)", fontSize: "11px", marginTop: "2px" }}>Linked Task: {td.task_id}</div>}
+                          <div style={{ color: "var(--text-muted)", fontSize: "11px", marginTop: "2px" }}>Consent at the time: {td.consent_status_at_evaluation}</div>
+                          <div style={{ color: "var(--text-muted)", fontSize: "11px" }}>Checked at: {td.evaluated_at}</div>
+                          {td.task_id && <div style={{ color: "var(--success)", fontSize: "11px", marginTop: "2px" }}>A follow-up was scheduled from this decision.</div>}
                         </div>
                       ))}
                     </div>

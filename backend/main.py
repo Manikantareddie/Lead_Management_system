@@ -16,16 +16,24 @@ if str(PROJECT_ROOT) not in sys.path:
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from fastapi import FastAPI, HTTPException, Query, Body, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Depends
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 import logging
 
 logger = logging.getLogger("api")
 
 from backend.database import get_store
-from backend.config import HOST, PORT
+from backend.config import HOST, PORT, CORS_ORIGINS
+from backend.auth import (
+    authenticate,
+    create_access_token,
+    decode_access_token,
+    public_user,
+    require_roles,
+)
+from business.stages import BUYING_DECISION_STAGE
 
 app = FastAPI(
     title="YottaFlex Operations API",
@@ -33,21 +41,86 @@ app = FastAPI(
     description="Enterprise Lead Intelligence & Operations Console Backend"
 )
 
-# Enable CORS for local development and deployed frontend (Netlify, Render, local Vite)
+# Enable CORS for the deployed frontend and local development only.
+# Additional origins can be supplied via the CORS_ORIGINS env var (comma-separated).
+_DEFAULT_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+    "https://smartleadhub.netlify.app",
+]
+_env_origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
+ALLOWED_ORIGINS = sorted(set(_DEFAULT_ORIGINS + _env_origins))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:8000",
-        "https://smartleadhub.netlify.app",
-    ],
-    allow_origin_regex=r"^https?://.*$",
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Paths reachable without authentication (health checks and the login endpoint).
+_PUBLIC_PATHS = {"/", "/health", "/api/health", "/api/auth/login", "/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def authentication_middleware(request: Request, call_next):
+    """Require a valid bearer token for all /api/* routes except the public allow-list."""
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    path = request.url.path
+    if path.startswith("/api") and path not in _PUBLIC_PATHS:
+        header = request.headers.get("Authorization", "")
+        if not header.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required. Please sign in."},
+            )
+        claims = decode_access_token(header[len("Bearer "):].strip())
+        if not claims:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Your session has expired. Please sign in again."},
+            )
+        request.state.user = claims
+    return await call_next(request)
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    """Exchange valid credentials for a signed bearer token."""
+    user = authenticate(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+    token, expires_at = create_access_token(user)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_at": expires_at,
+        "user": public_user(user),
+    }
+
+
+@app.get("/api/auth/me")
+def get_me(request: Request):
+    """Return the profile of the currently authenticated user."""
+    claims = getattr(request.state, "user", None)
+    if not claims:
+        raise HTTPException(status_code=401, detail="Authentication required. Please sign in.")
+    return {
+        "username": claims.get("sub"),
+        "display_name": claims.get("display_name"),
+        "role": claims.get("role"),
+        "salesrep_id": claims.get("salesrep_id"),
+    }
 
 
 @app.exception_handler(Exception)
@@ -55,7 +128,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled exception on %s: %s", request.url.path, exc, exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)},
+        content={"detail": "Something went wrong on our side. Please try again."},
     )
 
 
@@ -78,10 +151,44 @@ class TaskUpdateRequest(BaseModel):
     due_date: Optional[str] = None
 
 
+class ActivityCreateRequest(BaseModel):
+    lead_id: str
+    type: str = "call"
+    subject: Optional[str] = ""
+    description: Optional[str] = ""
+    activity_date: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    outcome: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+class OpportunityDecisionRequest(BaseModel):
+    # One of: "bought", "decision_pending", "lost".
+    decision: str
+    reason: Optional[str] = None
+    # Required when the decision is "decision_pending": the deal stays active
+    # until the customer decides, so the next follow-up must be scheduled.
+    next_follow_up_title: Optional[str] = None
+    next_follow_up_type: Optional[str] = "call"
+    next_follow_up_due_date: Optional[str] = None
+    next_follow_up_priority: Optional[str] = "medium"
+
+
 class StageTransitionRequest(BaseModel):
     to_stage: str
     changed_by: Optional[str] = None
     reason: Optional[str] = None
+
+
+class LeadCreateRequest(BaseModel):
+    first_name: str
+    last_name: Optional[str] = ""
+    email: Optional[str] = ""
+    company_name: str
+    source: Optional[str] = "Manual"
+    product_interest: Optional[str] = "SMB"
+    territory: Optional[str] = "North"
+    assigned_salesrep_id: Optional[str] = None
 
 
 @app.get("/")
@@ -121,6 +228,7 @@ def get_leads(
     sort_by: str = Query("created_at"),
     sort_order: str = Query("desc"),
     is_duplicate: Optional[bool] = None,
+    assigned_salesrep_id: Optional[str] = None,
 ):
     """Server-side paginated, filterable, and searchable leads list."""
     store = get_store()
@@ -134,7 +242,28 @@ def get_leads(
         sort_by=sort_by,
         sort_order=sort_order,
         is_duplicate=is_duplicate,
+        assigned_salesrep_id=assigned_salesrep_id,
     )
+
+
+@app.post("/api/leads")
+def create_lead(req: LeadCreateRequest):
+    """Creates a lead from a manual entry, reusing an existing company/contact when possible."""
+    store = get_store()
+    try:
+        return store.create_lead(req.model_dump())
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error("Lead creation failed for %s: %s", req.company_name, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Unable to create the lead. Please try again.")
+
+
+@app.get("/api/salesreps")
+def get_salesreps():
+    """Returns the sales representatives available for lead ownership."""
+    store = get_store()
+    return store.get_salesreps()
 
 
 @app.get("/api/leads/{lead_id}")
@@ -162,7 +291,8 @@ def transition_lead_stage(lead_id: str, req: StageTransitionRequest):
     except ValueError as ve:
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Lead transition failed for %s: %s", lead_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Unable to complete the stage transition. Please try again.")
 
 
 @app.get("/api/tasks")
@@ -173,8 +303,9 @@ def get_tasks(
     task_type: Optional[str] = None,
     priority: Optional[str] = None,
     search: Optional[str] = None,
+    due: Optional[str] = None,
 ):
-    """Paginated task outreach listing with status, priority, and text search."""
+    """Paginated follow-up listing with status, priority, due-window, and text search."""
     store = get_store()
     return store.get_tasks(
         page=page,
@@ -183,6 +314,7 @@ def get_tasks(
         task_type=task_type,
         priority=priority,
         search=search,
+        due=due,
     )
 
 
@@ -193,8 +325,11 @@ def create_task(req: TaskCreateRequest):
     try:
         new_task = store.create_task(req.model_dump())
         return new_task
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error("Task creation failed for lead %s: %s", req.lead_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Unable to create the follow-up task. Please try again.")
 
 
 @app.patch("/api/tasks/{task_id}")
@@ -224,6 +359,19 @@ def get_activities(
     )
 
 
+@app.post("/api/activities")
+def create_activity(req: ActivityCreateRequest):
+    """Record a sales activity. Activities are informational and never advance the lead's sales stage."""
+    store = get_store()
+    try:
+        return store.create_activity(req.model_dump())
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error("Activity creation failed for lead %s: %s", req.lead_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Unable to record the activity. Please try again.")
+
+
 @app.get("/api/opportunities")
 def get_opportunities(
     page: int = Query(1, ge=1),
@@ -243,6 +391,47 @@ def get_opportunities(
     )
 
 
+@app.post("/api/opportunities/{opportunity_id}/decision")
+def decide_opportunity(opportunity_id: str, req: OpportunityDecisionRequest):
+    """Record a buying decision: Bought, Lost, or Decision Pending.
+
+    Decision Pending keeps the deal active and requires a scheduled follow-up so
+    the representative does not lose the thread while the customer decides.
+    """
+    if req.decision not in BUYING_DECISION_STAGE:
+        raise HTTPException(status_code=400, detail="Choose a buying decision: bought, decision pending, or lost.")
+
+    next_follow_up = None
+    if req.decision == "decision_pending":
+        if not (req.next_follow_up_title and req.next_follow_up_title.strip()):
+            raise HTTPException(
+                status_code=400,
+                detail="A deal awaiting the customer's decision needs a scheduled follow-up.",
+            )
+        next_follow_up = {
+            "type": req.next_follow_up_type or "call",
+            "title": req.next_follow_up_title.strip(),
+            "due_date": req.next_follow_up_due_date,
+            "priority": req.next_follow_up_priority or "medium",
+            "status": "open",
+        }
+
+    store = get_store()
+    try:
+        result = store.decide_opportunity(
+            opportunity_id,
+            req.decision,
+            reason=req.reason,
+            next_follow_up=next_follow_up,
+        )
+    except Exception as e:
+        logger.error("Buying decision failed for opportunity %s: %s", opportunity_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Unable to record the buying decision. Please try again.")
+    if not result:
+        raise HTTPException(status_code=404, detail="That deal could not be found.")
+    return result
+
+
 @app.get("/api/analytics/stages")
 def get_stage_analytics():
     """Returns lifecycle stage progression and conversion metrics."""
@@ -258,6 +447,13 @@ def get_stage_analytics():
             {"stage": "Disqualified", "count": summary["stage_distribution"].get("Disqualified", 0)},
         ]
     }
+
+
+@app.get("/api/analytics/pipeline")
+def get_pipeline_analytics():
+    """Returns per-stage deal counts and values that power the visual pipeline board."""
+    store = get_store()
+    return {"stages": store.get_pipeline_analytics()}
 
 
 @app.get("/api/analytics/territories")
@@ -285,9 +481,9 @@ def get_validation_status():
     return store.get_validation_status()
 
 
-@app.post("/api/validation/run")
+@app.post("/api/validation/run", dependencies=[Depends(require_roles("admin", "manager"))])
 def run_validation():
-    """Executes on-demand verification against current active dataset."""
+    """Executes on-demand verification against current active dataset (admin/manager only)."""
     store = get_store()
     return store.get_validation_status(force_reload=True)
 

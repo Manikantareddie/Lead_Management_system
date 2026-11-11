@@ -1,31 +1,45 @@
 import React from "react";
 import type { NavTab } from "./Sidebar";
-import { RefreshCw, Menu } from "lucide-react";
+import { useAuth } from "../context/AuthContext";
+import { RefreshCw, Menu, LogOut } from "lucide-react";
 
 interface HeaderProps {
   currentTab: NavTab;
   onRefresh: () => void;
   isRefreshing?: boolean;
   onToggleSidebar?: () => void;
+  onSignOut?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefreshing = false, onToggleSidebar }) => {
+export const Header: React.FC<HeaderProps> = ({
+  currentTab,
+  onRefresh,
+  isRefreshing = false,
+  onToggleSidebar,
+  onSignOut,
+}) => {
+  const { user } = useAuth();
+
   const getTabInfo = (tab: NavTab) => {
     switch (tab) {
-      case "dashboard":
-        return { title: "Operations Overview", subtitle: "System health and pipeline summary" };
-      case "leads":
-        return { title: "Leads Explorer", subtitle: "Lead profiles, routing, and scoring history" };
+      case "my-leads":
+        return { title: "My Leads", subtitle: "Your leads and what to do next" };
       case "tasks":
-        return { title: "Tasks & Activities", subtitle: "Operational outreach tasks and logged cadence interactions" };
+        return { title: "Follow-ups", subtitle: "Calls, emails, and next steps to work today" };
       case "pipeline":
-        return { title: "Opportunities Pipeline", subtitle: "Deal stages, revenue forecast, and deduplication" };
+        return { title: "Pipeline", subtitle: "Deals moving toward a buying decision" };
+      case "leads":
+        return { title: "All Leads / Team", subtitle: "Every lead across the team" };
+      case "dashboard":
+        return { title: "Dashboard", subtitle: "Overview of leads, follow-ups, and pipeline" };
+      case "reports":
+        return { title: "Reports", subtitle: "Pipeline, territory, and scoring analytics" };
       case "investigations":
-        return { title: "Governance & Compliance Alerts", subtitle: "Automated policy monitoring, consent compliance, and exception remediation" };
+        return { title: "Alerts & Compliance", subtitle: "Policy and data exceptions that need review" };
       case "validation":
-        return { title: "Data Quality & System Health", subtitle: "Continuous referential integrity checks and schema validation" };
+        return { title: "Data Quality", subtitle: "Dataset integrity and schema verification" };
       default:
-        return { title: "Operations Console", subtitle: "Enterprise Lead Management" };
+        return { title: "Lead Management System", subtitle: "Enterprise Lead Management" };
     }
   };
 
@@ -33,6 +47,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefresh
 
   return (
     <header
+      className="app-header"
       style={{
         height: "56px",
         backgroundColor: "#ffffff",
@@ -40,7 +55,6 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefresh
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "0 24px",
         position: "sticky",
         top: 0,
         zIndex: 40,
@@ -59,25 +73,47 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, onRefresh, isRefresh
           </button>
         )}
         <div>
-          <h1 style={{ fontSize: "15px", fontWeight: 700, color: "var(--text-main)", margin: 0, lineHeight: 1.2 }}>
+          <h1 className="header-title">
             {title}
           </h1>
-          <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "1px" }}>
+          <div className="header-subtitle">
             {subtitle}
           </div>
         </div>
       </div>
 
-      {/* Subtle Refresh Action */}
-      <button
-        className="btn btn-secondary btn-sm"
-        onClick={onRefresh}
-        title="Refresh current view"
-        style={{ color: "var(--text-muted)" }}
-      >
-        <RefreshCw size={13} className={isRefreshing ? "spin" : ""} />
-        <span>Refresh</span>
-      </button>
+      {/* Refresh Action & Signed-in User */}
+      <div className="header-actions">
+        {user && (
+          <span className="header-user">
+            Signed in as{" "}
+            <strong style={{ color: "var(--text-main)", fontWeight: 600 }}>{user.display_name}</strong>{" "}
+            ({user.role})
+          </span>
+        )}
+
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={onRefresh}
+          title="Refresh current view"
+          style={{ color: "var(--text-muted)" }}
+        >
+          <RefreshCw size={13} className={isRefreshing ? "spin" : ""} />
+          <span>Refresh</span>
+        </button>
+
+        {onSignOut && (
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={onSignOut}
+            title="Sign out of YottaFlex"
+            style={{ color: "var(--text-muted)" }}
+          >
+            <LogOut size={13} />
+            <span>Sign out</span>
+          </button>
+        )}
+      </div>
     </header>
   );
 };

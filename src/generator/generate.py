@@ -44,30 +44,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from generator.config import DEFAULT_CONFIG
 from business.deduplication import (
     normalize_email_domain,
-    normalize_company_name,
     submission_month,
     compute_detection_key,
-    find_duplicate_lead,
     label_duplicate,
 )
 from business.consent import (
-    is_consent_valid_at,
     channel_for_task_type,
-    TASK_TYPE_TO_CHANNEL,
     consent_status_at,
 )
 from business.routing import route_lead
 from business.decisions import (
-    lead_priority,
-    should_create_task,
     explain_task_decision,
-    task_status_and_priority,
 )
 from business.stages import (
-    is_valid_stage_transition,
     stage_transition_decision,
     opportunity_outcome,
-    TERMINAL_STAGES,
 )
 
 # Small built-in vocabularies so the generator needs no external packages.
@@ -321,8 +312,6 @@ def generate_leads(rng: random.Random, contacts: list[dict], companies: list[dic
     contact_ids = [c["contact_id"] for c in contacts]
     contact_map = {c["contact_id"]: c for c in contacts}
     company_map = {c["company_id"]: c["name"] for c in companies}
-    salesrep_ids = [s["salesrep_id"] for s in salesreps]
-    salesrep_map = {s["salesrep_id"]: s for s in salesreps}
     rule_by_component = {r["component"]: r["score_rule_id"] for r in score_rules}
     assignment_counts: dict[str, int] = {}
     leads_by_detection_key: dict[str, dict] = {}
@@ -879,6 +868,32 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+# Entity key -> exported CSV filename. Single source of truth for both the
+# clean baseline export and the labelled edge-case (anomalous) export.
+_ENTITY_FILES: list[tuple[str, str]] = [
+    ("companies", "companies.csv"),
+    ("contacts", "contacts.csv"),
+    ("salesreps", "salesreps.csv"),
+    ("score_rules", "score_rules.csv"),
+    ("campaigns", "campaigns.csv"),
+    ("leads", "leads.csv"),
+    ("lead_campaigns", "lead_campaigns.csv"),
+    ("consents", "consents.csv"),
+    ("activities", "activities.csv"),
+    ("tasks", "tasks.csv"),
+    ("task_decisions", "task_decisions.csv"),
+    ("opportunities", "opportunities.csv"),
+    ("stage_histories", "stage_histories.csv"),
+]
+
+
+def _write_dataset_csvs(dataset: dict[str, list[dict]], out_dir: Path) -> None:
+    """Write every entity in the dataset to its CSV file under out_dir."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for key, filename in _ENTITY_FILES:
+        _write_csv(out_dir / filename, dataset.get(key, []))
+
+
 def generate(config: dict, inject_anomalies: bool = False) -> dict[str, Any]:
     """Generate all entities deterministically.
 
@@ -931,7 +946,7 @@ def generate(config: dict, inject_anomalies: bool = False) -> dict[str, Any]:
     _write_csv(output_dir / "opportunities.csv", opportunities)
     _write_csv(output_dir / "stage_histories.csv", stage_histories)
 
-    result = {
+    result: dict[str, Any] = {
         "companies": companies,
         "contacts": contacts,
         "salesreps": salesreps,
@@ -950,8 +965,14 @@ def generate(config: dict, inject_anomalies: bool = False) -> dict[str, Any]:
     if inject_anomalies or config.get("inject_exceptions"):
         from generator.exceptions import inject_exceptions, write_ground_truth
         gt_dir = config.get("ground_truth_dir", DEFAULT_CONFIG.get("ground_truth_dir", "data/ground_truth"))
-        _, exceptions = inject_exceptions(result, seed=seed)
+        # Materialize the labelled edge cases as real records in a separate directory
+        # so the injected anomalies exist in an exportable dataset.
+        anomaly_dir = Path(config.get("anomaly_output_dir") or f"{output_dir}_anomalous")
+        anom_data, exceptions = inject_exceptions(result, seed=seed)
+        _write_dataset_csvs(anom_data, anomaly_dir)
         write_ground_truth(exceptions, gt_dir)
+        write_ground_truth(exceptions, anomaly_dir)
+        result["anomaly_output_dir"] = str(anomaly_dir)
         result["ground_truth_exceptions"] = exceptions
 
     return result
@@ -979,6 +1000,9 @@ def main() -> None:
     parser.add_argument("--ground-truth-dir", type=str, default=DEFAULT_CONFIG.get("ground_truth_dir", "data/ground_truth"))
     parser.add_argument("--inject-exceptions", action="store_true",
                         help="Generate ground truth exceptions in data/ground_truth/")
+    parser.add_argument("--anomaly-output-dir", type=str, default=None,
+                        help="Directory to write the labelled edge-case (anomalous) dataset. "
+                             "Defaults to <output-dir>_anomalous when --inject-exceptions is set.")
     parser.add_argument("--export-json", action="store_true",
                         help="Export entities to JSON format")
     parser.add_argument("--export-sql", action="store_true",
@@ -1019,6 +1043,8 @@ def main() -> None:
     base_config["output_dir"] = args.output_dir
     base_config["ground_truth_dir"] = args.ground_truth_dir
     base_config["inject_exceptions"] = args.inject_exceptions
+    if args.anomaly_output_dir:
+        base_config["anomaly_output_dir"] = args.anomaly_output_dir
 
     result = generate(base_config, inject_anomalies=args.inject_exceptions)
 

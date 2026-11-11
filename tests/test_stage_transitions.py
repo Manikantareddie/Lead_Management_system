@@ -9,7 +9,10 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.database import get_store
 
-client = TestClient(app)
+from conftest import authenticated_client
+
+# Authenticated client (auth is enforced on all /api/* routes).
+client = authenticated_client()
 
 
 def test_valid_stage_transition_progression():

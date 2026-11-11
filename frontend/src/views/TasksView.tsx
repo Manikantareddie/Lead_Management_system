@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../services/api";
+import { useData } from "../context/DataContext";
 import type { TaskItem, ActivityItem, PaginatedResponse } from "../types";
 import {
   CheckSquare,
@@ -11,13 +12,17 @@ import {
   ArrowUpRight,
   Clock,
   CheckCircle2,
+  Check,
+  RotateCcw,
 } from "lucide-react";
 
 interface TasksViewProps {
   onSelectLead: (leadId: string) => void;
+  onDataChanged?: () => void;
 }
 
-export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
+export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead, onDataChanged }) => {
+  const { version } = useData();
   const [activeTab, setActiveTab] = useState<"tasks" | "activities">("tasks");
 
   // Tasks state
@@ -30,6 +35,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
   const [taskStatus, setTaskStatus] = useState("");
   const [taskPriority, setTaskPriority] = useState("");
   const [taskType, setTaskType] = useState("");
+  const [taskScope, setTaskScope] = useState<"" | "overdue" | "today" | "week">("");
 
   // Activities state
   const [activities, setActivities] = useState<ActivityItem[]>([]);
@@ -82,6 +88,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
         priority: taskPriority || undefined,
         task_type: taskType || undefined,
         search: debouncedTaskSearch.trim() || undefined,
+        due: taskScope || undefined,
       });
       setTasks(res.items);
       setTaskTotal(res.total);
@@ -121,11 +128,13 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
     }
   }, [
     activeTab,
+    version,
     taskPage,
     taskPageSize,
     taskStatus,
     taskPriority,
     taskType,
+    taskScope,
     debouncedTaskSearch,
     activityPage,
     activityPageSize,
@@ -138,6 +147,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
     setTaskStatus("");
     setTaskPriority("");
     setTaskType("");
+    setTaskScope("");
     setTaskPage(1);
   };
 
@@ -147,22 +157,43 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
     setActivityPage(1);
   };
 
-  const handleStatusChange = async (taskId: string, newStatus: string) => {
+  const handleStatusChange = async (task: TaskItem, newStatus: string) => {
     try {
-      await api.updateTask(taskId, { status: newStatus });
+      await api.updateTask(task.task_id, { status: newStatus });
       setTasks((prev) =>
-        prev.map((t) => (t.task_id === taskId ? { ...t, status: newStatus } : t))
+        prev.map((t) => (t.task_id === task.task_id ? { ...t, status: newStatus } : t))
       );
-      const readableStatus = newStatus.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
-      setToastMessage(`Task ${taskId} status updated to "${readableStatus}".`);
+      const label = task.lead_name || task.title || "Follow-up";
+      setToastMessage(
+        newStatus === "completed"
+          ? `Marked "${label}" as done.`
+          : `Reopened "${label}".`
+      );
       setTimeout(() => setToastMessage(null), 3500);
+      onDataChanged?.();
     } catch (err: any) {
-      setError("Failed to update task status: " + err.message);
+      setError("Failed to update follow-up: " + err.message);
       setTimeout(() => setError(null), 5000);
     }
   };
 
-  const hasTaskFilters = Boolean(taskSearch || taskStatus || taskPriority || taskType);
+  const isOpenTask = (status: string) =>
+    ["open", "in_progress"].includes((status || "").toLowerCase());
+
+  const todayIso = (() => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  })();
+
+  const formatDueDate = (date: string) => {
+    if (!date) return "—";
+    const d = new Date(date.slice(0, 10));
+    if (isNaN(d.getTime())) return date.slice(0, 10);
+    return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  };
+
+  const hasTaskFilters = Boolean(taskSearch || taskStatus || taskPriority || taskType || taskScope);
   const hasActivityFilters = Boolean(activitySearch || activityType);
 
   const getPriorityBadge = (priority: string) => {
@@ -175,21 +206,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
         return <span className="badge badge-neutral">Low</span>;
       default:
         return <span className="badge badge-neutral">{priority}</span>;
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status?.toLowerCase()) {
-      case "completed":
-        return <span className="badge badge-success">Completed</span>;
-      case "open":
-        return <span className="badge badge-neutral">Open</span>;
-      case "in_progress":
-        return <span className="badge badge-primary">In Progress</span>;
-      case "cancelled":
-        return <span className="badge badge-neutral">Cancelled</span>;
-      default:
-        return <span className="badge badge-neutral">{status}</span>;
     }
   };
 
@@ -258,7 +274,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
             onClick={() => setActiveTab("tasks")}
           >
             <CheckSquare size={14} />
-            <span>Outreach Tasks</span>
+            <span>Follow-ups</span>
             <span style={{ fontSize: "11px", color: "var(--text-muted)", marginLeft: "2px", fontVariantNumeric: "tabular-nums" }}>
               ({taskTotal.toLocaleString()})
             </span>
@@ -268,7 +284,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
             onClick={() => setActiveTab("activities")}
           >
             <Activity size={14} />
-            <span>Activity Log</span>
+            <span>Activity</span>
             <span style={{ fontSize: "11px", color: "var(--text-muted)", marginLeft: "2px", fontVariantNumeric: "tabular-nums" }}>
               ({activityTotal.toLocaleString()})
             </span>
@@ -279,7 +295,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
           {activeTab === "tasks" ? (
             <span>
               Showing <strong style={{ color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>{tasks.length}</strong> of{" "}
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{taskTotal.toLocaleString()}</span> tasks
+              <span style={{ fontVariantNumeric: "tabular-nums" }}>{taskTotal.toLocaleString()}</span> follow-ups
             </span>
           ) : (
             <span>
@@ -289,6 +305,34 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
           )}
         </div>
       </div>
+
+      {/* Focus scope for follow-ups */}
+      {activeTab === "tasks" && (
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "13px", color: "var(--text-muted)" }}>Show:</span>
+          <div className="segmented-control">
+            {(
+              [
+                { key: "", label: "All" },
+                { key: "overdue", label: "Overdue" },
+                { key: "today", label: "Due today" },
+                { key: "week", label: "Upcoming" },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.key}
+                className={`segmented-btn ${taskScope === opt.key ? "active" : ""}`}
+                onClick={() => {
+                  setTaskScope(opt.key);
+                  setTaskPage(1);
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Filter Toolbar */}
       <div className="toolbar">
@@ -305,7 +349,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
                 <input
                   type="text"
                   className="input-search"
-                  placeholder="Search task or lead ID..."
+                  placeholder="Search follow-up or lead..."
                   value={taskSearch}
                   onChange={(e) => {
                     setTaskSearch(e.target.value);
@@ -452,83 +496,135 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: "190px" }}>Task ID</th>
-                <th style={{ width: "95px" }}>Type</th>
-                <th style={{ width: "230px" }}>Task Title</th>
+                <th style={{ width: "260px" }}>Follow-up</th>
+                <th style={{ width: "210px" }}>Lead</th>
+                <th style={{ width: "150px" }}>Due</th>
                 <th style={{ width: "95px" }}>Priority</th>
-                <th style={{ width: "105px" }}>Status</th>
-                <th style={{ width: "110px" }}>Due Date</th>
-                <th style={{ width: "155px" }}>Assigned Rep</th>
-                <th style={{ width: "85px", textAlign: "right" }}>Lead</th>
+                <th style={{ width: "150px" }}>Assigned to</th>
+                <th style={{ width: "180px", textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading && tasks.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
-                    Loading tasks...
+                  <td colSpan={6} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                    Loading follow-ups...
                   </td>
                 </tr>
               ) : tasks.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
-                    No tasks found matching criteria.
+                  <td colSpan={6} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                    No follow-ups found. Nothing is waiting on you right now.
                   </td>
                 </tr>
               ) : (
-                tasks.map((task) => (
-                  <tr key={task.task_id}>
-                    <td>
-                      <span className="id-tag" title={task.task_id}>{task.task_id}</span>
-                    </td>
-                    <td>
-                      <span className="badge badge-neutral" style={{ textTransform: "capitalize" }}>
-                        {task.type}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ fontWeight: 500, color: "var(--text-main)" }}>
-                        {task.title}
-                      </span>
-                    </td>
-                    <td>{getPriorityBadge(task.priority)}</td>
-                    <td>
-                      <select
-                        className="select-compact"
-                        style={{ height: "26px", fontSize: "11px", padding: "0 6px" }}
-                        value={task.status}
-                        onChange={(e) => handleStatusChange(task.task_id, e.target.value)}
-                        title="Change task status"
-                      >
-                        <option value="open">Open</option>
-                        <option value="in_progress">In Progress</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                      </select>
-                    </td>
-                    <td>
-                      <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
-                        {task.due_date}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ color: task.assigned_salesrep_name === "Unassigned" ? "var(--warning-text)" : "var(--text-secondary)" }}>
-                        {task.assigned_salesrep_name || "Unassigned"}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => onSelectLead(task.lead_id)}
-                        title={`View lead ${task.lead_id}`}
-                        style={{ padding: "0 8px" }}
-                      >
-                        <span>Lead</span>
-                        <ArrowUpRight size={12} />
-                      </button>
-                    </td>
-                  </tr>
-                ))
+                tasks.map((task) => {
+                  const open = isOpenTask(task.status);
+                  const overdued = open && (task.overdue ?? (!!task.due_date && task.due_date.slice(0, 10) < todayIso));
+                  const dueToday = open && !overdued && task.due_date?.slice(0, 10) === todayIso;
+                  return (
+                    <tr key={task.task_id}>
+                      <td>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                          <span style={{ fontWeight: 500, color: "var(--text-main)" }}>{task.title}</span>
+                          <span
+                            className="badge badge-neutral"
+                            style={{ textTransform: "capitalize", alignSelf: "flex-start" }}
+                          >
+                            {task.type}
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <button
+                          onClick={() => onSelectLead(task.lead_id)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: 0,
+                            cursor: "pointer",
+                            textAlign: "left",
+                            color: "var(--primary)",
+                            fontWeight: 500,
+                            fontSize: "13px",
+                          }}
+                          title="Open this lead"
+                        >
+                          {task.lead_name || "View lead"}
+                        </button>
+                        {task.company_name && (
+                          <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>{task.company_name}</div>
+                        )}
+                      </td>
+                      <td>
+                        {overdued ? (
+                          <span className="badge badge-danger">Overdue · {formatDueDate(task.due_date)}</span>
+                        ) : dueToday ? (
+                          <span className="badge badge-warning">Due today</span>
+                        ) : (
+                          <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>
+                            {formatDueDate(task.due_date)}
+                          </span>
+                        )}
+                      </td>
+                      <td>{getPriorityBadge(task.priority)}</td>
+                      <td>
+                        <span
+                          style={{
+                            color:
+                              task.assigned_salesrep_name === "Unassigned"
+                                ? "var(--warning-text)"
+                                : "var(--text-secondary)",
+                          }}
+                        >
+                          {task.assigned_salesrep_name || "Unassigned"}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: "6px", justifyContent: "flex-end" }}>
+                          {open ? (
+                            <>
+                              {task.status?.toLowerCase() === "open" && (
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  onClick={() => handleStatusChange(task, "in_progress")}
+                                  title="Start working on this follow-up"
+                                >
+                                  Start
+                                </button>
+                              )}
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() => handleStatusChange(task, "completed")}
+                                title="Mark this follow-up as done"
+                              >
+                                <Check size={12} />
+                                <span>Done</span>
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => handleStatusChange(task, "open")}
+                              title="Reopen this follow-up"
+                            >
+                              <RotateCcw size={12} />
+                              <span>Reopen</span>
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => onSelectLead(task.lead_id)}
+                            title="Open lead"
+                            style={{ padding: "0 8px" }}
+                          >
+                            <ArrowUpRight size={12} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -536,7 +632,6 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
           <table className="data-table">
             <thead>
               <tr>
-                <th style={{ width: "190px" }}>Activity ID</th>
                 <th style={{ width: "100px" }}>Type</th>
                 <th style={{ width: "240px" }}>Subject</th>
                 <th style={{ width: "110px" }}>Outcome</th>
@@ -548,22 +643,19 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
             <tbody>
               {loading && activities.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                  <td colSpan={6} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
                     Loading activities...
                   </td>
                 </tr>
               ) : activities.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
+                  <td colSpan={6} style={{ textAlign: "center", padding: "36px", color: "var(--text-muted)" }}>
                     No activity records found matching criteria.
                   </td>
                 </tr>
               ) : (
                 activities.map((act) => (
                   <tr key={act.activity_id}>
-                    <td>
-                      <span className="id-tag" title={act.activity_id}>{act.activity_id}</span>
-                    </td>
                     <td>
                       <span className="badge badge-neutral" style={{ textTransform: "capitalize" }}>
                         {act.type}
@@ -589,7 +681,7 @@ export const TasksView: React.FC<TasksViewProps> = ({ onSelectLead }) => {
                       <button
                         className="btn btn-secondary btn-sm"
                         onClick={() => onSelectLead(act.lead_id)}
-                        title={`View lead ${act.lead_id}`}
+                        title="Open lead"
                         style={{ padding: "0 8px" }}
                       >
                         <span>Lead</span>

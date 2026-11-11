@@ -1,44 +1,39 @@
-import React, { useState, useEffect } from "react";
-import { Sidebar, type NavTab } from "./components/Sidebar";
+import React, { useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { Sidebar, type NavTab, isAdminTab } from "./components/Sidebar";
 import { Header } from "./components/Header";
-import { api } from "./services/api";
+import { useAuth } from "./context/AuthContext";
+import { useData } from "./context/DataContext";
 import { DashboardView } from "./views/DashboardView";
 import { LeadsView } from "./views/LeadsView";
 import { TasksView } from "./views/TasksView";
 import { PipelineView } from "./views/PipelineView";
+import { ReportsView } from "./views/ReportsView";
 import { InvestigationsView } from "./views/InvestigationsView";
 import { DataQualityView } from "./views/DataQualityView";
 import { LeadDetailDrawer } from "./views/LeadDetailDrawer";
+import { LoginView } from "./views/LoginView";
 
 export const App: React.FC = () => {
-  const [currentTab, setCurrentTab] = useState<NavTab>("dashboard");
+  const { user, loading, logout } = useAuth();
+  const { anomaliesCount, isRefreshing, refresh } = useData();
+  const [currentTab, setCurrentTab] = useState<NavTab>("my-leads");
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const [initialLeadStage, setInitialLeadStage] = useState<string | undefined>(undefined);
   const [initialLeadScoreBand, setInitialLeadScoreBand] = useState<string | undefined>(undefined);
   const [initialOppStage, setInitialOppStage] = useState<string | undefined>(undefined);
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [anomaliesCount, setAnomaliesCount] = useState<number>(5);
 
-  useEffect(() => {
-    api.getDashboardSummary()
-      .then((summary) => {
-        if (typeof summary.anomalies_detected === "number") {
-          setAnomaliesCount(summary.anomalies_detected);
-        }
-      })
-      .catch(() => {});
-  }, [refreshKey]);
+  const handleRefresh = refresh;
 
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    setRefreshKey((k) => k + 1);
-    setTimeout(() => setIsRefreshing(false), 600);
-  };
+  // Technical / administrative consoles are limited to privileged roles.
+  const canViewAdmin = user?.role === "admin" || user?.role === "manager";
 
   const handleNavigate = (tab: string, filter?: { stage?: string; oppStage?: string; scoreBand?: string }) => {
-    if (["dashboard", "leads", "tasks", "pipeline", "investigations", "validation"].includes(tab)) {
+    if (isAdminTab(tab) && !canViewAdmin) return;
+    if (
+      ["my-leads", "leads", "tasks", "pipeline", "dashboard", "reports", "investigations", "validation"].includes(tab)
+    ) {
       if (tab === "leads") {
         setInitialLeadStage(filter?.stage);
         setInitialLeadScoreBand(filter?.scoreBand);
@@ -50,6 +45,30 @@ export const App: React.FC = () => {
       setSidebarOpen(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "10px",
+          backgroundColor: "var(--bg-primary)",
+          color: "var(--text-muted)",
+          fontSize: "14px",
+        }}
+      >
+        <RefreshCw size={18} className="spin" />
+        <span>Loading YottaFlex...</span>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginView />;
+  }
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", backgroundColor: "var(--bg-primary)", position: "relative" }}>
@@ -63,13 +82,11 @@ export const App: React.FC = () => {
       {/* Navigation Sidebar */}
       <Sidebar
         currentTab={currentTab}
-        onNavigate={(tab) => {
-          setCurrentTab(tab);
-          setSidebarOpen(false);
-        }}
+        onNavigate={handleNavigate}
         anomaliesCount={anomaliesCount}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        showAdmin={canViewAdmin}
       />
 
       {/* Main Content Area */}
@@ -80,52 +97,68 @@ export const App: React.FC = () => {
           onRefresh={handleRefresh}
           isRefreshing={isRefreshing}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
+          onSignOut={logout}
         />
 
         {/* Dynamic View Container (State-Preserved for Instant Tab Switching) */}
-        <main style={{ flex: 1, padding: "20px 24px", maxWidth: "1440px", width: "100%", margin: "0 auto" }}>
+        <main className="app-main-inner">
           <div style={{ display: currentTab === "dashboard" ? "block" : "none" }}>
             <DashboardView
-              key={refreshKey}
               onNavigate={handleNavigate}
               onSelectLead={(leadId) => setSelectedLeadId(leadId)}
             />
           </div>
 
+          <div style={{ display: currentTab === "my-leads" ? "block" : "none" }}>
+            <LeadsView
+              title="My Leads"
+              ownerScope={user?.salesrep_id || undefined}
+              onSelectLead={(leadId) => setSelectedLeadId(leadId)}
+              onDataChanged={handleRefresh}
+            />
+          </div>
+
           <div style={{ display: currentTab === "leads" ? "block" : "none" }}>
             <LeadsView
-              key={`${refreshKey}-${initialLeadStage || "all"}-${initialLeadScoreBand || "all"}`}
+              title="All Leads / Team"
               initialStage={initialLeadStage}
               initialScoreBand={initialLeadScoreBand}
               onSelectLead={(leadId) => setSelectedLeadId(leadId)}
+              onDataChanged={handleRefresh}
             />
           </div>
 
           <div style={{ display: currentTab === "tasks" ? "block" : "none" }}>
             <TasksView
-              key={refreshKey}
               onSelectLead={(leadId) => setSelectedLeadId(leadId)}
+              onDataChanged={handleRefresh}
             />
           </div>
 
           <div style={{ display: currentTab === "pipeline" ? "block" : "none" }}>
             <PipelineView
-              key={`${refreshKey}-${initialOppStage || "all"}`}
               initialStage={initialOppStage}
               onSelectLead={(leadId) => setSelectedLeadId(leadId)}
             />
           </div>
 
-          <div style={{ display: currentTab === "investigations" ? "block" : "none" }}>
-            <InvestigationsView
-              key={refreshKey}
-              onSelectLead={(leadId) => setSelectedLeadId(leadId)}
-            />
+          <div style={{ display: currentTab === "reports" ? "block" : "none" }}>
+            <ReportsView />
           </div>
 
-          <div style={{ display: currentTab === "validation" ? "block" : "none" }}>
-            <DataQualityView key={refreshKey} onNavigate={handleNavigate} />
-          </div>
+          {canViewAdmin && (
+            <div style={{ display: currentTab === "investigations" ? "block" : "none" }}>
+              <InvestigationsView
+                onSelectLead={(leadId) => setSelectedLeadId(leadId)}
+              />
+            </div>
+          )}
+
+          {canViewAdmin && (
+            <div style={{ display: currentTab === "validation" ? "block" : "none" }}>
+              <DataQualityView onNavigate={handleNavigate} />
+            </div>
+          )}
         </main>
       </div>
 

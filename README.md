@@ -20,30 +20,44 @@
 
 ## 🚀 How to Run the Project
 
+Use **Windows PowerShell** and open two terminals in VS Code. In **both** terminals, go to the project folder:
+```powershell
+cd "C:\Users\pasha\OneDrive\Desktop\yottalexai_project\Lead_Management_system"
+```
+
 ### Terminal 1: Start the Backend (FastAPI)
-Run this command from the project root:
+Run this in the first terminal and leave it running:
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 ```
-- **Backend API URL:** [http://127.0.0.1:8000](http://127.0.0.1:8000)
-- **Interactive Swagger Docs:** [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-- **Health Check:** [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health)
 
 ### Terminal 2: Start the Frontend Console (React + Vite)
-In a **second terminal**, run:
+In the second terminal (also in the project folder), run this and leave it running:
 ```powershell
-cd frontend
-npm run dev
+npm.cmd --prefix frontend run dev
 ```
-*(Or from the project root: `npm.cmd --prefix frontend run dev`)*
-- **Web App Console:** [http://localhost:5173](http://localhost:5173)
+
+Open the web app at [http://127.0.0.1:5173](http://127.0.0.1:5173). Sign in with a demo account below. To stop either service, press **Ctrl+C** in its terminal.
+
+**Backend links:** [API](http://127.0.0.1:8000) · [Swagger docs](http://127.0.0.1:8000/docs) · [Health check](http://127.0.0.1:8000/api/health)
+
+### Sign-In (Role-Based Access)
+All `/api/*` routes (except `/api/health` and `/api/auth/login`) require a bearer token. The console prompts for credentials on load. Default demo accounts:
+
+| Username | Password | Role | Scope |
+| :--- | :--- | :--- | :--- |
+| `admin` | `admin123` | `admin` | Full access, including validation runs and investigations |
+| `manager` | `manager123` | `manager` | Pipeline, tasks, validation, and investigations |
+| `rep` | `rep123` | `sales_rep` | Read + own task updates (no validation/investigations) |
+
+Override the built-in accounts in production via the `AUTH_USERS` environment variable (JSON array of `{"username","password","role","name","salesrep_id"}` objects).
 
 ### Verification Commands
 ```powershell
 # Check live Supabase table counts & database status
 .\.venv\Scripts\python.exe scripts/migrate_and_seed_supabase.py --check-only
 
-# Run backend automated test suite (87 tests)
+# Run backend automated test suite (98 tests)
 .\.venv\Scripts\python.exe -m pytest -q
 
 # Step 10: Verify 100% bitwise reproducibility across runs
@@ -100,17 +114,17 @@ python scripts/migrate_to_supabase.py --data-dir data/generated_full
 The migration engine safely imports all 13 tables in strict foreign-key dependency order:
 1. `companies` (5,000 rows)
 2. `contacts` (10,000 rows)
-3. `salesreps` (100 rows)
+3. `salesreps` (50 rows)
 4. `score_rules` (3 rows)
-5. `campaigns` (20 rows)
+5. `campaigns` (100 rows)
 6. `leads` (20,000 rows)
-7. `lead_campaigns` (29,974 rows)
-8. `consents` (12,190 rows)
-9. `activities` (60,000 rows)
+7. `lead_campaigns` (30,040 rows)
+8. `consents` (15,000 rows)
+9. `activities` (35,000 rows)
 10. `tasks` (25,000 rows)
 11. `task_decisions` (38,416 rows)
 12. `opportunities` (3,000 rows)
-13. `stage_histories` (2,906 rows)
+13. `stage_histories` (25,000 rows)
 
 *Total: 206,609 rows.*
 
@@ -148,6 +162,9 @@ The migration engine safely imports all 13 tables in strict foreign-key dependen
 ### Render Deployment Configuration
 - Configured in `render.yaml`.
 - Set `DATABASE_URL` in the Render Environment Variables tab to your Supabase Transaction Pooler connection string (`port 6543`).
+- Set `AUTH_SECRET` to a long random string (used to HMAC-sign bearer tokens; a dev default is used locally if unset).
+- Set `AUTH_USERS` to the production account list (JSON array) if the built-in demo accounts should not be used.
+- Set `CORS_ORIGINS` to a comma-separated list of allowed browser origins (e.g. `https://smartleadhub.netlify.app`).
 - Service uses `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`.
 
 ### Netlify Deployment Configuration
@@ -191,12 +208,13 @@ The migration engine safely imports all 13 tables in strict foreign-key dependen
 
 ## 5. Automated Test Suite
 
-Run the full automated test suite (87 tests, 100% passing):
+Run the full automated test suite (98 tests, 100% passing):
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -v
 ```
 
 Test breakdown:
+- `tests/test_auth.py`: Login success/failure, bearer-token verification, protected-route enforcement, and role-based access control (403 for under-privileged roles).
 - `tests/test_backend_api.py`: FastAPI endpoints, health checks, pagination, filters, 360° drawer relationships, investigations, task create/update mutations.
 - `tests/test_stage1_regression.py`: Routing governance, consent gating, and decision audit logs.
 - `tests/test_business_rules.py`: Score bounds, deduplication, stage transitions, and consent revocation.
@@ -210,8 +228,10 @@ Test breakdown:
 
 1. **Zero Credential Exposure:** Database credentials, passwords, and service-role keys are strictly loaded from environment variables and never exposed in Git, browser code, or API responses.
 2. **Least Privilege & Role Safety:** The frontend interacts exclusively through the authenticated backend API; Supabase service-role keys are never sent to the browser.
-3. **Data Quality & Isolation:** Benchmark test anomalies are segregated from production baseline data.
-4. **CORS Hardening:** Configured with specific allowable origins and HTTP methods.
+3. **Authentication & RBAC:** Every `/api/*` route (except health and login) requires an HMAC-SHA256 signed bearer token. Admin-only operations (validation runs, investigations) are enforced server-side via role dependencies and return `403` for under-privileged roles.
+4. **Data Quality & Isolation:** Benchmark test anomalies are segregated from production baseline data.
+5. **CORS Hardening:** Configured with an explicit allow-list of origins (via `CORS_ORIGINS`) and specific HTTP methods — no wildcard origin reflection.
+6. **No Internal Error Leakage:** All unhandled exceptions return a generic message; raw exception text/stack traces are logged server-side only and never returned to clients.
 
 ---
 

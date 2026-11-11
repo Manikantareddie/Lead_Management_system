@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { api } from "../services/api";
+import { useData } from "../context/DataContext";
 import type { ValidationStatus } from "../types";
 import {
   CheckCircle2,
@@ -18,7 +19,11 @@ interface DataQualityViewProps {
   onNavigate?: (tab: string) => void;
 }
 
+const PLACEHOLDER = "—";
+
 export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) => {
+  const { health, version } = useData();
+  const recordCounts = health?.record_counts ?? null;
   const [status, setStatus] = useState<ValidationStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
@@ -31,8 +36,8 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getValidationStatus();
-      setStatus(data);
+      const validation = await api.getValidationStatus();
+      setStatus(validation);
     } catch (err: any) {
       setError(err.message || "Failed to load validation status");
     } finally {
@@ -48,7 +53,7 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
       const data = await api.runValidation();
       setStatus(data);
       if (data.is_valid) {
-        setRunSuccessMessage("On-demand verification completed: 0 violations found across all 206,609 production records.");
+        setRunSuccessMessage("On-demand verification completed: dataset is valid with 0 violations.");
       } else {
         setRunSuccessMessage(`Verification completed with ${data.error_count} error(s) and ${data.warning_count} warning(s).`);
       }
@@ -61,38 +66,57 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
 
   useEffect(() => {
     loadStatus();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version]);
 
-  const deliverableTables = [
-    { entity: "Companies", name: "companies.csv", category: "Master Data", count: 5000, entityKey: "company", description: "B2B enterprise account entities (domain, size, industry, tier)" },
-    { entity: "Contacts", name: "contacts.csv", category: "Master Data", count: 10000, entityKey: "contact", description: "Prospect decision-makers, verified emails, and job titles" },
-    { entity: "Sales Representatives", name: "salesreps.csv", category: "Operations", count: 50, entityKey: "salesrep", description: "Territory-assigned active reps and product specialty alignments" },
-    { entity: "Score Configuration", name: "score_rules.csv", category: "Configuration", count: 3, entityKey: "score_rule", description: "Deterministic weighting rules (Fit 50%, Intent 30%, Engagement 20%)" },
-    { entity: "Marketing Campaigns", name: "campaigns.csv", category: "Master Data", count: 100, entityKey: "campaign", description: "Inbound channels and outbound marketing initiatives" },
-    { entity: "Operational Leads", name: "leads.csv", category: "Core Pipeline", count: 20000, entityKey: "lead", description: "Operational leads with composite scoring, territory routing, and deduplication" },
-    { entity: "Campaign Attributions", name: "lead_campaigns.csv", category: "Bridge Table", count: 30040, entityKey: "lead_campaign", description: "Multi-touch campaign attribution mapping (N:M join)" },
-    { entity: "Channel Consents", name: "consents.csv", category: "Compliance", count: 15000, entityKey: "consent", description: "Time-effective consent grants and opt-out timestamps by channel" },
-    { entity: "Activity Touchpoints", name: "activities.csv", category: "Event History", count: 35000, entityKey: "activity", description: "Cadence interactions (calls, emails, meetings, demos) with duration" },
-    { entity: "Follow-up Tasks", name: "tasks.csv", category: "Operations", count: 25000, entityKey: "task", description: "Actionable outreach tasks prioritized by lead score and rep allocation" },
-    { entity: "Task Decision Audits", name: "task_decisions.csv", category: "Explainability Audit", count: 38416, entityKey: "task_decision", description: "Immutable governance records explaining task gating decisions" },
-    { entity: "Pipeline Opportunities", name: "opportunities.csv", category: "Revenue Pipeline", count: 3000, entityKey: "opportunity", description: "Qualified deals with win/loss reasons and competitor attributions" },
-    { entity: "Stage Histories", name: "stage_histories.csv", category: "Lifecycle Audit", count: 25000, entityKey: "stage_history", description: "Monotonic append-only lifecycle stage transition log" },
+  const deliverableTables: Array<{
+    entity: string;
+    name: string;
+    category: string;
+    countKey?: string;
+    entityKey: string;
+    description: string;
+  }> = [
+    { entity: "Companies", name: "companies.csv", category: "Master Data", countKey: "companies", entityKey: "company", description: "B2B enterprise account entities (domain, size, industry, tier)" },
+    { entity: "Contacts", name: "contacts.csv", category: "Master Data", countKey: "contacts", entityKey: "contact", description: "Prospect decision-makers, verified emails, and job titles" },
+    { entity: "Sales Representatives", name: "salesreps.csv", category: "Operations", entityKey: "salesrep", description: "Territory-assigned active reps and product specialty alignments" },
+    { entity: "Score Configuration", name: "score_rules.csv", category: "Configuration", entityKey: "score_rule", description: "Deterministic weighting rules (Fit 50%, Intent 30%, Engagement 20%)" },
+    { entity: "Marketing Campaigns", name: "campaigns.csv", category: "Master Data", entityKey: "campaign", description: "Inbound channels and outbound marketing initiatives" },
+    { entity: "Operational Leads", name: "leads.csv", category: "Core Pipeline", countKey: "leads", entityKey: "lead", description: "Operational leads with composite scoring, territory routing, and deduplication" },
+    { entity: "Campaign Attributions", name: "lead_campaigns.csv", category: "Bridge Table", entityKey: "lead_campaign", description: "Multi-touch campaign attribution mapping (N:M join)" },
+    { entity: "Channel Consents", name: "consents.csv", category: "Compliance", entityKey: "consent", description: "Time-effective consent grants and opt-out timestamps by channel" },
+    { entity: "Activity Touchpoints", name: "activities.csv", category: "Event History", countKey: "activities", entityKey: "activity", description: "Cadence interactions (calls, emails, meetings, demos) with duration" },
+    { entity: "Follow-up Tasks", name: "tasks.csv", category: "Operations", countKey: "tasks", entityKey: "task", description: "Actionable outreach tasks prioritized by lead score and rep allocation" },
+    { entity: "Task Decision Audits", name: "task_decisions.csv", category: "Explainability Audit", countKey: "task_decisions", entityKey: "task_decision", description: "Immutable governance records explaining task gating decisions" },
+    { entity: "Pipeline Opportunities", name: "opportunities.csv", category: "Revenue Pipeline", countKey: "opportunities", entityKey: "opportunity", description: "Qualified deals with win/loss reasons and competitor attributions" },
+    { entity: "Stage Histories", name: "stage_histories.csv", category: "Lifecycle Audit", entityKey: "stage_history", description: "Monotonic append-only lifecycle stage transition log" },
   ];
 
-  const rulesList = status?.rules_checked && status.rules_checked.length > 0 ? status.rules_checked : [
-    "Primary Key Formats & Uniqueness",
-    "Foreign Key Referential Integrity (18 Relationships)",
-    "Non-Null & Required Values",
-    "Enum & Controlled Vocabularies",
-    "Date Chronology & Conversion Freeze",
-    "Arithmetic Lead Scoring (50% Fit / 30% Intent / 20% Engagement)",
-    "Monotonic Lifecycle Stage Transitions",
-    "Deduplication Key & Quarantine Consistency",
-    "Time-Effective Consent Eligibility",
-    "Territory & Specialty Sales Routing",
-    "Actionable Task Assignment Integrity",
-    "Decision Audit & Explainability Records",
-  ];
+  const rulesList = status?.rules_checked && status.rules_checked.length > 0 ? status.rules_checked : [];
+
+  // ---- Live-derived metrics (no hardcoded constants) ----
+  const grandTotal = recordCounts
+    ? Object.values(recordCounts).reduce((acc, v) => acc + (Number(v) || 0), 0)
+    : null;
+  const trackedTables = recordCounts ? Object.keys(recordCounts).length : null;
+
+  const getRowCount = (countKey?: string): number | null => {
+    if (!countKey || !recordCounts) return null;
+    const value = recordCounts[countKey];
+    return typeof value === "number" ? value : null;
+  };
+
+  const integrityRate = status && !status.is_system_error
+    ? status.is_valid
+      ? "100.0%"
+      : grandTotal && grandTotal > 0
+      ? `${Math.max(0, 100 - (status.total_issues / grandTotal) * 100).toFixed(1)}%`
+      : PLACEHOLDER
+    : PLACEHOLDER;
+
+  const rulesTotal = status?.rules_checked?.length ?? 0;
+  const rulesPassed = status ? Math.max(0, rulesTotal - (status.is_system_error ? 0 : status.error_count)) : 0;
+  const rulesVerifiedValue = status && rulesTotal > 0 ? `${rulesPassed} of ${rulesTotal} Passed` : PLACEHOLDER;
 
   const getTableStatus = (entityKey: string) => {
     if (loading && !status) {
@@ -148,6 +172,8 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
       })
     : null;
 
+  const grandTotalLabel = grandTotal !== null ? grandTotal.toLocaleString() : PLACEHOLDER;
+
   return (
     <div className="view-container">
       {/* Clean Baseline Architecture Explainer Banner */}
@@ -168,8 +194,9 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
           <ShieldCheck size={20} color="var(--primary)" style={{ flexShrink: 0, marginTop: "2px" }} />
           <div style={{ fontSize: "13px", color: "var(--text-secondary)", lineHeight: 1.5 }}>
             <strong style={{ color: "var(--text-main)" }}>Clean Baseline Architecture:</strong> All{" "}
-            <strong style={{ color: "var(--text-main)" }}>206,609 active production records</strong> maintain 100% referential integrity and schema compliance.
-            The 5 injected benchmark anomaly cases are isolated in a separate evaluation set so production data remains uncorrupted.
+            <strong style={{ color: "var(--text-main)" }}>{grandTotalLabel} active production records</strong> are continuously
+            verified for referential integrity and schema compliance. Benchmark anomaly cases are isolated in a separate
+            evaluation set so production data remains uncorrupted.
           </div>
         </div>
         {onNavigate && (
@@ -178,7 +205,7 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
             onClick={() => onNavigate("investigations")}
             style={{ display: "inline-flex", alignItems: "center", gap: "6px", whiteSpace: "nowrap" }}
           >
-            <span>View 5 Anomaly Investigations</span>
+            <span>View Anomaly Investigations</span>
             <ArrowRight size={13} />
           </button>
         )}
@@ -191,10 +218,10 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
             Total Production Records
           </div>
           <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--text-main)", marginTop: "4px" }}>
-            206,609
+            {grandTotalLabel}
           </div>
           <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-            Across 13 Relational Tables
+            Across {trackedTables !== null ? trackedTables : PLACEHOLDER} Relational Tables
           </div>
         </div>
 
@@ -203,10 +230,16 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
             Referential Integrity
           </div>
           <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--success)", marginTop: "4px" }}>
-            100.0%
+            {integrityRate}
           </div>
           <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-            Zero Broken Joins or Foreign Keys
+            {status
+              ? status.is_system_error
+                ? "Validation engine unavailable"
+                : status.is_valid
+                ? "Zero Broken Joins or Foreign Keys"
+                : `${status.total_issues.toLocaleString()} issues detected`
+              : "Pending verification"}
           </div>
         </div>
 
@@ -215,22 +248,22 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
             Rule Engines Verified
           </div>
           <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--primary)", marginTop: "4px" }}>
-            12 of 12 Passed
+            {rulesVerifiedValue}
           </div>
           <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-            Complete Schema Compliance
+            {status?.is_valid ? "Complete Schema Compliance" : "Live rule evaluation"}
           </div>
         </div>
 
         <div className="card" style={{ padding: "14px 16px" }}>
           <div style={{ fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)" }}>
-            Deterministic Baseline
+            Last Verified
           </div>
           <div style={{ fontSize: "22px", fontWeight: 700, color: "var(--text-main)", marginTop: "4px" }}>
-            Seed 20261022
+            {formattedTimestamp || PLACEHOLDER}
           </div>
           <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-            100% Bitwise Reproducible
+            Continuous integrity monitoring
           </div>
         </div>
       </div>
@@ -245,7 +278,7 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
                 Evaluating Production Dataset Integrity...
               </div>
               <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                Auditing 206,609 records across 13 relational tables...
+                Auditing production records across relational tables...
               </div>
             </div>
           </div>
@@ -292,7 +325,8 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
                 </div>
 
                 <div style={{ fontSize: "13px", color: "var(--text-muted)", marginTop: "4px" }}>
-                  Active Production Baseline • 206,609 records across 13 tables
+                  Active Production Baseline
+                  {grandTotal !== null && <span> • {grandTotalLabel} records</span>}
                   {formattedTimestamp && (
                     <span> • Last verified: {formattedTimestamp}</span>
                   )}
@@ -334,6 +368,7 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
             <button
               className="btn btn-ghost btn-sm"
               onClick={() => setShowRules((prev) => !prev)}
+              disabled={rulesList.length === 0}
               style={{ padding: "0 4px", fontSize: "12px", color: "var(--primary)" }}
             >
               <span>{showRules ? "Hide Verification Rules" : `Show Checked Rules (${rulesList.length} Engines)`}</span>
@@ -352,7 +387,7 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
             )}
           </div>
 
-          {showRules && (
+          {showRules && rulesList.length > 0 && (
             <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "12px" }}>
               {rulesList.map((rule, idx) => (
                 <span
@@ -409,14 +444,14 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
           <div>
             <h3 style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-main)", margin: 0, display: "flex", alignItems: "center", gap: "6px" }}>
               <Layers size={16} color="var(--primary)" />
-              Production Relational Tables & Entities (13 Tables)
+              Production Relational Tables & Entities ({deliverableTables.length} Tables)
             </h3>
             <p style={{ fontSize: "12px", color: "var(--text-muted)", margin: "2px 0 0 0" }}>
               Continuous foreign key referential integrity and volume audit
             </p>
           </div>
           <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
-            Total Verified: <strong style={{ color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>206,609 Rows</strong>
+            Total Verified: <strong style={{ color: "var(--text-main)", fontVariantNumeric: "tabular-nums" }}>{grandTotalLabel} Rows</strong>
           </span>
         </div>
 
@@ -431,28 +466,31 @@ export const DataQualityView: React.FC<DataQualityViewProps> = ({ onNavigate }) 
             </tr>
           </thead>
           <tbody>
-            {deliverableTables.map((tbl) => (
-              <tr key={tbl.name}>
-                <td>
-                  <div>
-                    <div style={{ fontWeight: 600, color: "var(--text-main)", fontSize: "13px" }}>
-                      {tbl.entity}
+            {deliverableTables.map((tbl) => {
+              const rowCount = getRowCount(tbl.countKey);
+              return (
+                <tr key={tbl.name}>
+                  <td>
+                    <div>
+                      <div style={{ fontWeight: 600, color: "var(--text-main)", fontSize: "13px" }}>
+                        {tbl.entity}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "monospace", marginTop: "1px" }}>
+                        {tbl.name}
+                      </div>
                     </div>
-                    <div style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "monospace", marginTop: "1px" }}>
-                      {tbl.name}
-                    </div>
-                  </div>
-                </td>
-                <td>{getCategoryBadge(tbl.category)}</td>
-                <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-main)", fontWeight: 500 }}>
-                  {tbl.count.toLocaleString()}
-                </td>
-                <td style={{ color: "var(--text-secondary)", fontSize: "13px" }}>{tbl.description}</td>
-                <td style={{ textAlign: "right" }}>
-                  {getTableStatus(tbl.entityKey)}
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td>{getCategoryBadge(tbl.category)}</td>
+                  <td style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--text-main)", fontWeight: 500 }}>
+                    {rowCount !== null ? rowCount.toLocaleString() : PLACEHOLDER}
+                  </td>
+                  <td style={{ color: "var(--text-secondary)", fontSize: "13px" }}>{tbl.description}</td>
+                  <td style={{ textAlign: "right" }}>
+                    {getTableStatus(tbl.entityKey)}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
